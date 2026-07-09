@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>semsearch</title>
+</head>
+<body>
+  <h1>semsearch</h1>
+  <form action="/" method="get">
+    <input type="search" name="q" value="{{ q }}" size="60" autofocus>
+    <button type="submit">Search</button>
+  </form>
+
+  {% if error %}
+  <p><strong>Error:</strong> {{ error }}</p>
+  {% endif %}
+
+  {% if results is not none %}
+    {% if results %}
+    <ol>
+      {% for result in results %}
+      <li>
+        <a href="{{ result.url }}">{{ result.title or result.url }}</a>
+        <br>
+        <small>{{ result.url }} &middot; score {{ "%.3f" | format(result.score) }}</small>
+        <p>{{ result.snippet[:500] }}{% if result.snippet | length > 500 %}&hellip;{% endif %}</p>
+      </li>
+      {% endfor %}
+    </ol>
+    {% else %}
+    <p>No results.</p>
+    {% endif %}
+  {% endif %}
+</body>
+</html>

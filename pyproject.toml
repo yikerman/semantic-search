@@ -1,0 +1,41 @@
+[project]
+name = "semantic-search"
+version = "0.1.0"
+description = "Embeddings-first search engine for indie blogs"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "curl-cffi>=0.15.0",
+    "fastapi>=0.139.0",
+    "httpx[socks]>=0.28.1",
+    "jinja2>=3.1.6",
+    "pgvector>=0.5.0",
+    "psycopg-pool>=3.3.1",
+    "psycopg[binary]>=3.3.4",
+    "pydantic-settings>=2.14.2",
+    "trafilatura>=2.1.0",
+    "typer>=0.26.8",
+    "uvicorn[standard]>=0.51.0",
+]
+
+[project.scripts]
+semsearch = "semsearch.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11,<1"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "semsearch"
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.411",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.15.20",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

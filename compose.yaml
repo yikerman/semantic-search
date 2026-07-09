@@ -1,0 +1,33 @@
+services:
+  db:
+    image: docker.io/pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: semsearch
+      POSTGRES_PASSWORD: semsearch
+      POSTGRES_DB: semsearch
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U semsearch -d semsearch"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Containerfile
+    profiles: ["deploy"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://semsearch:semsearch@db:5432/semsearch
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+volumes:
+  pgdata:
