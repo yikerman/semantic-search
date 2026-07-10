@@ -1,36 +1,71 @@
+import asyncio
 import importlib.resources
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import LiteralString, TypeAlias, cast
+from typing import LiteralString, cast
 
 import psycopg
+from psycopg import sql
 from pgvector import HalfVector
 from pgvector.psycopg import register_vector_async
 from psycopg_pool import AsyncConnectionPool
 
 from semsearch.config import Settings
+from semsearch.search.filters import SqlPredicate
 
 
 class IndexMetaError(RuntimeError):
     pass
 
 
-SiteRow: TypeAlias = tuple[
-    int,
-    str,
-    str | None,
-    str | None,
-    datetime | None,
-    datetime | None,
-    str | None,
-    str | None,
-]
-ChunkInsert: TypeAlias = tuple[int, str, int, Sequence[float]]
-DenseCandidateRow: TypeAlias = tuple[int, int, str, str | None, str, float]
+class IndexMetaGuard:
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self._checked = False
+        self._lock = asyncio.Lock()
+
+    async def ensure(self, conn: psycopg.AsyncConnection) -> None:
+        if self._checked:
+            return
+        async with self._lock:
+            if self._checked:
+                return
+            await check_index_meta(conn, self.settings)
+            self._checked = True
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
+class SiteRecord:
+    id: int
+    base_url: str
+    sitemap_url: str | None
+    feed_url: str | None
+    last_indexed_at: datetime | None
+    last_polled_at: datetime | None
+    feed_etag: str | None
+    feed_last_modified: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkInsert:
+    chunk_index: int
+    content: str
+    char_count: int
+    embedding: Sequence[float]
+
+
+@dataclass(frozen=True, slots=True)
+class DenseCandidateRecord:
+    chunk_id: int
+    page_id: int
+    url: str
+    title: str | None
+    content: str
+    similarity: float
+
+
+@dataclass(frozen=True, slots=True)
 class IndexStats:
     site_count: int
     page_count: int
@@ -115,7 +150,7 @@ async def upsert_site_config(
     base_url: str,
     sitemap_url: str | None,
     feed_url: str | None,
-) -> SiteRow:
+) -> SiteRecord:
     cur = await conn.execute(
         f"""
         INSERT INTO sites (base_url, sitemap_url, feed_url)
@@ -129,10 +164,10 @@ async def upsert_site_config(
     )
     row = await cur.fetchone()
     assert row is not None
-    return cast(SiteRow, row)
+    return SiteRecord(*row)
 
 
-async def list_site_configs(conn: psycopg.AsyncConnection) -> list[SiteRow]:
+async def list_site_configs(conn: psycopg.AsyncConnection) -> list[SiteRecord]:
     cur = await conn.execute(
         f"""
         SELECT {SITE_COLUMNS}
@@ -140,12 +175,12 @@ async def list_site_configs(conn: psycopg.AsyncConnection) -> list[SiteRow]:
         ORDER BY base_url
         """
     )
-    return [cast(SiteRow, row) for row in await cur.fetchall()]
+    return [SiteRecord(*row) for row in await cur.fetchall()]
 
 
 async def find_site_config(
     conn: psycopg.AsyncConnection, *, base_url: str
-) -> SiteRow | None:
+) -> SiteRecord | None:
     cur = await conn.execute(
         f"""
         SELECT {SITE_COLUMNS}
@@ -155,7 +190,7 @@ async def find_site_config(
         (base_url,),
     )
     row = await cur.fetchone()
-    return None if row is None else cast(SiteRow, row)
+    return None if row is None else SiteRecord(*row)
 
 
 async def mark_site_indexed(conn: psycopg.AsyncConnection, *, site_id: int) -> None:
@@ -246,12 +281,12 @@ async def replace_page_chunks(
             [
                 (
                     page_id,
-                    chunk_index,
-                    content,
-                    char_count,
-                    HalfVector(embedding),
+                    chunk.chunk_index,
+                    chunk.content,
+                    chunk.char_count,
+                    HalfVector(chunk.embedding),
                 )
-                for chunk_index, content, char_count, embedding in chunks
+                for chunk in chunks
             ],
         )
 
@@ -260,21 +295,25 @@ async def fetch_dense_candidate_rows(
     conn: psycopg.AsyncConnection,
     *,
     query_embedding: Sequence[float],
+    predicate: SqlPredicate,
     limit: int,
-) -> list[DenseCandidateRow]:
-    embedding = HalfVector(query_embedding)
+) -> list[DenseCandidateRecord]:
+    embedding = HalfVector(list(query_embedding))
     cur = await conn.execute(
-        """
+        sql.SQL(
+            """
         SELECT c.id, c.page_id, p.url, p.title, c.content,
                1 - (c.embedding <=> %s) AS similarity
         FROM chunks c
         JOIN pages p ON p.id = c.page_id
+        WHERE {predicate}
         ORDER BY c.embedding <=> %s
         LIMIT %s
-        """,
-        (embedding, embedding, limit),
+        """
+        ).format(predicate=predicate.clause),
+        (embedding, *predicate.params, embedding, limit),
     )
-    return [cast(DenseCandidateRow, row) for row in await cur.fetchall()]
+    return [DenseCandidateRecord(*row) for row in await cur.fetchall()]
 
 
 async def _verify_index_meta(conn: psycopg.AsyncConnection, settings: Settings) -> None:

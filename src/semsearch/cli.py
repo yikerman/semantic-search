@@ -2,7 +2,7 @@ import asyncio
 import logging
 from collections import Counter
 from collections.abc import AsyncIterator, Coroutine
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from typing import Annotated, Any
 
@@ -18,7 +18,6 @@ from semsearch.embeddings.openai_compat import EmbeddingError, OpenAICompatEmbed
 from semsearch.ingest.fetch import FetchError
 from semsearch.ingest.models import IndexOutcome
 from semsearch.ingest.service import IngestError, IngestService
-from semsearch.search.service import SearchService
 from semsearch.sites import PollOutcome, Site, SiteError, SiteService
 
 app = typer.Typer(help="semsearch: indie blog search engine admin tool")
@@ -35,21 +34,17 @@ class Services:
     settings: Settings
     pool: AsyncConnectionPool
     embedder: OpenAICompatEmbeddings
+    meta_guard: db.IndexMetaGuard
 
 
 @asynccontextmanager
 async def open_services() -> AsyncIterator[Services]:
     settings = get_settings()
-    embedder = get_embedding_provider(settings)
-    try:
+    async with AsyncExitStack() as stack:
+        embedder = await stack.enter_async_context(get_embedding_provider(settings))
         pool = db.create_pool(settings)
-        await pool.open()
-        try:
-            yield Services(settings, pool, embedder)
-        finally:
-            await pool.close()
-    finally:
-        await embedder.aclose()
+        await stack.enter_async_context(pool)
+        yield Services(settings, pool, embedder, db.IndexMetaGuard(settings))
 
 
 def run(coro: Coroutine[Any, Any, Any]) -> Any:
@@ -104,26 +99,32 @@ def site_add(
 
     async def _add() -> tuple[Site, list[IndexOutcome] | None]:
         async with open_services() as services:
-            sites = SiteService(services.pool, services.settings)
-            try:
+            async with AsyncExitStack() as stack:
+                sites = await stack.enter_async_context(
+                    SiteService(
+                        services.pool,
+                        services.settings,
+                        meta_guard=services.meta_guard,
+                    )
+                )
                 site = await sites.add_site(url, sitemap_url=sitemap, feed_url=feed)
                 if not index:
                     return site, None
-                ingest = IngestService(
-                    services.pool, services.embedder, services.settings
-                )
-                try:
-                    outcomes = await sites.index_site(
-                        site.base_url,
-                        ingest,
-                        force=force,
-                        on_progress=_echo_outcome,
+                ingest = await stack.enter_async_context(
+                    IngestService(
+                        services.pool,
+                        services.embedder,
+                        services.settings,
+                        meta_guard=services.meta_guard,
                     )
-                finally:
-                    await ingest.aclose()
+                )
+                outcomes = await sites.index_site(
+                    site.base_url,
+                    ingest,
+                    force=force,
+                    on_progress=_echo_outcome,
+                )
                 return site, outcomes
-            finally:
-                await sites.aclose()
 
     site, outcomes = run(_add())
     _echo_site(site)
@@ -137,11 +138,12 @@ def site_list() -> None:
 
     async def _list() -> list[Site]:
         async with open_services() as services:
-            sites = SiteService(services.pool, services.settings)
-            try:
+            async with SiteService(
+                services.pool,
+                services.settings,
+                meta_guard=services.meta_guard,
+            ) as sites:
                 return await sites.list_sites()
-            finally:
-                await sites.aclose()
 
     sites = run(_list())
     if not sites:
@@ -157,18 +159,28 @@ def site_index(site: str, force: ForceOption = False) -> None:
 
     async def _index() -> list[IndexOutcome]:
         async with open_services() as services:
-            sites = SiteService(services.pool, services.settings)
-            ingest = IngestService(services.pool, services.embedder, services.settings)
-            try:
+            async with AsyncExitStack() as stack:
+                sites = await stack.enter_async_context(
+                    SiteService(
+                        services.pool,
+                        services.settings,
+                        meta_guard=services.meta_guard,
+                    )
+                )
+                ingest = await stack.enter_async_context(
+                    IngestService(
+                        services.pool,
+                        services.embedder,
+                        services.settings,
+                        meta_guard=services.meta_guard,
+                    )
+                )
                 return await sites.index_site(
                     site,
                     ingest,
                     force=force,
                     on_progress=_echo_outcome,
                 )
-            finally:
-                await ingest.aclose()
-                await sites.aclose()
 
     outcomes = run(_index())
     _echo_index_summary(outcomes)
@@ -196,9 +208,22 @@ def site_poll(
         if site is None and not all_sites:
             raise SiteError("Pass a site origin or --all")
         async with open_services() as services:
-            sites = SiteService(services.pool, services.settings)
-            ingest = IngestService(services.pool, services.embedder, services.settings)
-            try:
+            async with AsyncExitStack() as stack:
+                sites = await stack.enter_async_context(
+                    SiteService(
+                        services.pool,
+                        services.settings,
+                        meta_guard=services.meta_guard,
+                    )
+                )
+                ingest = await stack.enter_async_context(
+                    IngestService(
+                        services.pool,
+                        services.embedder,
+                        services.settings,
+                        meta_guard=services.meta_guard,
+                    )
+                )
                 if all_sites:
                     return await sites.poll_all(
                         ingest,
@@ -217,36 +242,10 @@ def site_poll(
                         on_progress=_echo_outcome,
                     )
                 ]
-            finally:
-                await ingest.aclose()
-                await sites.aclose()
 
     polls = run(_poll())
     for poll in polls:
         _echo_poll_summary(poll)
-
-
-@app.command()
-def search(
-    query: str,
-    limit: Annotated[int, typer.Option("-k", "--limit")] = 10,
-) -> None:
-    """Search from the terminal."""
-
-    async def _search() -> list:
-        async with open_services() as services:
-            service = SearchService(services.pool, services.embedder, services.settings)
-            return await service.search(query, limit=limit)
-
-    results = run(_search())
-    if not results:
-        typer.echo("No results.")
-        return
-    for rank, result in enumerate(results, start=1):
-        typer.secho(f"{rank}. {result.title or result.url}", bold=True)
-        typer.echo(f"   {result.url}  (score {result.score:.3f})")
-        snippet = " ".join(result.snippet.split())
-        typer.echo(f"   {snippet[:200]}{'…' if len(snippet) > 200 else ''}\n")
 
 
 @app.command()

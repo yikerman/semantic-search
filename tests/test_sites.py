@@ -1,5 +1,6 @@
 import asyncio
 
+from semsearch.config import Settings
 from semsearch.ingest.fetch import FetchError, FetchResponse
 from semsearch.ingest.models import IndexOutcome
 from semsearch.sites import (
@@ -22,6 +23,9 @@ class FakeFetcher:
             return self.responses[url]
         except KeyError as exc:
             raise FetchError(url) from exc
+
+    async def aclose(self) -> None:
+        raise AssertionError("injected fetcher must remain caller-owned")
 
 
 class FakeUrlIndexer:
@@ -145,6 +149,17 @@ async def test_discover_feed_url_uses_alternate_link():
     fetcher = FakeFetcher({"https://example.com/blog/": html})
     feed = await discover_feed_url(fetcher, "https://example.com/blog/")
     assert feed == "https://example.com/blog/feed/"
+
+
+async def test_site_service_does_not_close_injected_fetcher():
+    fetcher = FakeFetcher({})
+    service = SiteService(
+        None,  # type: ignore[arg-type]
+        Settings(),
+        fetcher=fetcher,  # type: ignore[arg-type]
+    )
+
+    await service.aclose()
 
 
 async def test_discover_feed_url_resolves_relative_links_from_page_url():

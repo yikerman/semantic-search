@@ -23,7 +23,13 @@
       <li>
         <a href="{{ result.url }}">{{ result.title or result.url }}</a>
         <br>
-        <small>{{ result.url }} &middot; score {{ "%.3f" | format(result.score) }}</small>
+        <small>
+          {{ result.url }}
+          &middot; rrf {{ "%.6f" | format(result.scores["rrf"]) }}
+          {% for name, score in result.scores.items() if name != "rrf" %}
+          &middot; {{ name }} {{ "%.3f" | format(score) }}
+          {% endfor %}
+        </small>
         <p>{{ result.snippet[:500] }}{% if result.snippet | length > 500 %}&hellip;{% endif %}</p>
       </li>
       {% endfor %}

@@ -16,17 +16,19 @@ Two entrypoints share one service layer:
 
 ## Search
 
-`SearchService.search()` embeds the query, runs retrievers, merges candidates by
-`chunk_id`, applies rankers, then returns the best chunk per page.
+`SearchService.search()` compiles filters, embeds the query, runs retrievers,
+builds a candidate union, runs optional rerankers, applies RRF, then returns the
+best chunk per page.
 
 Score contract:
 
 - retrievers write named scores, e.g. `scores["dense"]`
-- rankers that change ordering write `scores["final"]`
-- `final_score()` uses `final`, then `dense`, then `0.0`
+- rerankers return named ranked runs and may write a native diagnostic score
+- RRF writes `scores["rrf"]`; it is the only final ordering score
 
-Add BM25, RRF, cross-encoder reranking, or user preference ranking as
-`Retriever`/`Ranker` implementations and pass them into `SearchService`.
+Add BM25 as a `Retriever`, cross-encoder or preference ordering as a `Reranker`,
+and filtering as SQL-backed `SearchFilter` implementations. Retriever and
+reranker runs are inputs to the final RRF fusion.
 
 ## Ingest
 

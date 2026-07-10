@@ -66,15 +66,13 @@ class SiteService:
         settings: Settings,
         *,
         fetcher: Fetcher | None = None,
+        meta_guard: db.IndexMetaGuard | None = None,
     ) -> None:
         self.pool = pool
         self.settings = settings
-        self.fetcher = fetcher or Fetcher(
-            user_agent=settings.user_agent,
-            timeout=settings.fetch_timeout_seconds,
-            delay_seconds=settings.fetch_delay_seconds,
-            impersonate=settings.fetch_impersonate,
-        )
+        self._owns_fetcher = fetcher is None
+        self.fetcher = fetcher or _make_fetcher(settings)
+        self.meta_guard = meta_guard or db.IndexMetaGuard(settings)
 
     async def add_site(
         self,
@@ -92,7 +90,7 @@ class SiteService:
         resolved_sitemap = await self._resolve_sitemap(start_url, sitemap_url)
         resolved_feed = await self._resolve_feed(start_url, feed_url)
         async with self.pool.connection() as conn, conn.transaction():
-            await db.check_index_meta(conn, self.settings)
+            await self.meta_guard.ensure(conn)
             row = await db.upsert_site_config(
                 conn,
                 base_url=base_url,
@@ -103,7 +101,7 @@ class SiteService:
 
     async def list_sites(self) -> list[Site]:
         async with self.pool.connection() as conn:
-            await db.check_index_meta(conn, self.settings)
+            await self.meta_guard.ensure(conn)
             rows = await db.list_site_configs(conn)
         return [_site_from_row(row) for row in rows]
 
@@ -113,7 +111,7 @@ class SiteService:
         except ValueError as exc:
             raise SiteError(str(exc)) from exc
         async with self.pool.connection() as conn:
-            await db.check_index_meta(conn, self.settings)
+            await self.meta_guard.ensure(conn)
             row = await db.find_site_config(conn, base_url=base_url)
         if row is None:
             raise SiteError(f"Unknown site: {base_url}")
@@ -195,7 +193,14 @@ class SiteService:
         return await map_concurrently(feed_sites, limit=concurrency, func=poll_one)
 
     async def aclose(self) -> None:
-        await self.fetcher.aclose()
+        if self._owns_fetcher:
+            await self.fetcher.aclose()
+
+    async def __aenter__(self) -> "SiteService":
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        await self.aclose()
 
     async def _resolve_sitemap(self, start_url: str, value: str) -> str | None:
         match value:
@@ -348,24 +353,23 @@ def _header(headers: Mapping[str, str], name: str) -> str | None:
     return headers.get(name) or headers.get(name.title()) or headers.get(name.upper())
 
 
-def _site_from_row(row) -> Site:
-    (
-        site_id,
-        base_url,
-        sitemap_url,
-        feed_url,
-        last_indexed_at,
-        last_polled_at,
-        feed_etag,
-        feed_last_modified,
-    ) = row
+def _site_from_row(row: db.SiteRecord) -> Site:
     return Site(
-        id=site_id,
-        base_url=base_url,
-        sitemap_url=sitemap_url,
-        feed_url=feed_url,
-        last_indexed_at=last_indexed_at,
-        last_polled_at=last_polled_at,
-        feed_etag=feed_etag,
-        feed_last_modified=feed_last_modified,
+        id=row.id,
+        base_url=row.base_url,
+        sitemap_url=row.sitemap_url,
+        feed_url=row.feed_url,
+        last_indexed_at=row.last_indexed_at,
+        last_polled_at=row.last_polled_at,
+        feed_etag=row.feed_etag,
+        feed_last_modified=row.feed_last_modified,
+    )
+
+
+def _make_fetcher(settings: Settings) -> Fetcher:
+    return Fetcher(
+        user_agent=settings.user_agent,
+        timeout=settings.fetch_timeout_seconds,
+        delay_seconds=settings.fetch_delay_seconds,
+        impersonate=settings.fetch_impersonate,
     )

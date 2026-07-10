@@ -31,21 +31,18 @@ class IngestService:
         *,
         fetcher: Fetcher | None = None,
         chunker: CharChunker | None = None,
+        meta_guard: db.IndexMetaGuard | None = None,
     ) -> None:
         self.pool = pool
         self.embedder = embedder
         self.settings = settings
-        self.fetcher = fetcher or Fetcher(
-            user_agent=settings.user_agent,
-            timeout=settings.fetch_timeout_seconds,
-            delay_seconds=settings.fetch_delay_seconds,
-            impersonate=settings.fetch_impersonate,
-        )
+        self._owns_fetcher = fetcher is None
+        self.fetcher = fetcher or _make_fetcher(settings)
         self.chunker = chunker or CharChunker(
             chunk_chars=settings.chunk_chars,
             chunk_overlap=settings.chunk_overlap,
         )
-        self._meta_checked = False
+        self.meta_guard = meta_guard or db.IndexMetaGuard(settings)
 
     async def index_url(self, url: str, *, force: bool = False) -> IndexOutcome:
         async with self.pool.connection() as conn:
@@ -81,11 +78,11 @@ class IngestService:
                 conn,
                 page_id=page_id,
                 chunks=[
-                    (
-                        chunk.chunk_index,
-                        chunk.content,
-                        chunk.char_count,
-                        vector,
+                    db.ChunkInsert(
+                        chunk_index=chunk.chunk_index,
+                        content=chunk.content,
+                        char_count=chunk.char_count,
+                        embedding=vector,
                     )
                     for chunk, vector in zip(chunks, vectors, strict=True)
                 ],
@@ -141,9 +138,23 @@ class IngestService:
         return outcomes
 
     async def aclose(self) -> None:
-        await self.fetcher.aclose()
+        if self._owns_fetcher:
+            await self.fetcher.aclose()
+
+    async def __aenter__(self) -> "IngestService":
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        await self.aclose()
 
     async def _ensure_meta(self, conn: psycopg.AsyncConnection) -> None:
-        if not self._meta_checked:
-            await db.check_index_meta(conn, self.settings)
-            self._meta_checked = True
+        await self.meta_guard.ensure(conn)
+
+
+def _make_fetcher(settings: Settings) -> Fetcher:
+    return Fetcher(
+        user_agent=settings.user_agent,
+        timeout=settings.fetch_timeout_seconds,
+        delay_seconds=settings.fetch_delay_seconds,
+        impersonate=settings.fetch_impersonate,
+    )
