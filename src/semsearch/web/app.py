@@ -6,12 +6,12 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from semsearch.config import get_settings
-from semsearch.db import IndexMetaError, create_pool
+from semsearch.db import IndexMetaError, create_pool, ping
 from semsearch.embeddings import get_embedding_provider
 from semsearch.embeddings.openai_compat import EmbeddingError
 from semsearch.search.service import SearchService
 
-templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
 
 @asynccontextmanager
@@ -50,7 +50,7 @@ def create_app() -> FastAPI:
     @app.get("/healthz")
     async def healthz(request: Request):
         async with request.app.state.pool.connection() as conn:
-            await conn.execute("SELECT 1")
+            await ping(conn)
         return {"status": "ok"}
 
     return app

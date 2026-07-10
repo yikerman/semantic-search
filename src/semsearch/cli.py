@@ -257,25 +257,16 @@ def status() -> None:
         settings = get_settings()
         async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
             try:
-                cur = await conn.execute(
-                    """
-                    SELECT (SELECT count(*) FROM sites),
-                           (SELECT count(*) FROM pages),
-                           (SELECT count(*) FROM chunks),
-                           (SELECT embedding_model FROM index_meta WHERE id = 1),
-                           (SELECT embedding_dim FROM index_meta WHERE id = 1)
-                    """
-                )
+                stats = await db.fetch_index_stats(conn)
             except psycopg.errors.UndefinedTable:
                 typer.echo("Database not initialized. Run: semsearch init-db")
                 raise typer.Exit(1) from None
-            row = await cur.fetchone()
-            assert row is not None
-            sites, pages, chunks, model, dim = row
-        typer.echo(f"sites:  {sites}")
-        typer.echo(f"pages:  {pages}")
-        typer.echo(f"chunks: {chunks}")
-        typer.echo(f"embedding space: {model} ({dim} dims)")
+        typer.echo(f"sites:  {stats.site_count}")
+        typer.echo(f"pages:  {stats.page_count}")
+        typer.echo(f"chunks: {stats.chunk_count}")
+        typer.echo(
+            f"embedding space: {stats.embedding_model} ({stats.embedding_dim} dims)"
+        )
 
     run(_status())
 

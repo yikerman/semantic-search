@@ -1,6 +1,6 @@
-from pgvector import HalfVector
 from psycopg_pool import AsyncConnectionPool
 
+from semsearch import db
 from semsearch.models import Candidate
 
 
@@ -14,18 +14,11 @@ class DenseRetriever:
         self, query: str, query_embedding: list[float], k: int
     ) -> list[Candidate]:
         async with self.pool.connection() as conn:
-            cur = await conn.execute(
-                """
-                SELECT c.id, c.page_id, p.url, p.title, c.content,
-                       1 - (c.embedding <=> %s) AS similarity
-                FROM chunks c
-                JOIN pages p ON p.id = c.page_id
-                ORDER BY c.embedding <=> %s
-                LIMIT %s
-                """,
-                (HalfVector(query_embedding), HalfVector(query_embedding), k),
+            rows = await db.fetch_dense_candidate_rows(
+                conn,
+                query_embedding=query_embedding,
+                limit=k,
             )
-            rows = await cur.fetchall()
         return [
             Candidate(
                 chunk_id=chunk_id,

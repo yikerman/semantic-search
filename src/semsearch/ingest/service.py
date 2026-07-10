@@ -2,15 +2,14 @@ import logging
 from collections.abc import Callable
 
 import psycopg
-from pgvector import HalfVector
 from psycopg_pool import AsyncConnectionPool
 
+from semsearch import db
 from semsearch.config import Settings
-from semsearch.db import check_index_meta
 from semsearch.embeddings.base import EmbeddingProvider
 from semsearch.ingest import sitemap
 from semsearch.ingest.chunk import CharChunker
-from semsearch.ingest.extract import ExtractedPage, extract_page
+from semsearch.ingest.extract import extract_page
 from semsearch.ingest.fetch import Fetcher
 from semsearch.ingest.models import IndexOutcome
 from semsearch.ingest.outcomes import collect_index_outcomes
@@ -52,8 +51,7 @@ class IngestService:
         async with self.pool.connection() as conn:
             await self._ensure_meta(conn)
             if not force:
-                cur = await conn.execute("SELECT 1 FROM pages WHERE url = %s", (url,))
-                if await cur.fetchone() is not None:
+                if await db.page_exists(conn, url=url):
                     return IndexOutcome(url, "skipped", "already indexed")
 
         html = await self.fetcher.fetch_text(url)
@@ -71,27 +69,27 @@ class IngestService:
         vectors = await self.embedder.embed_documents(embed_inputs)
 
         async with self.pool.connection() as conn, conn.transaction():
-            site_id = await self._upsert_site(conn, url)
-            page_id = await self._upsert_page(conn, site_id, url, page)
-            await conn.execute("DELETE FROM chunks WHERE page_id = %s", (page_id,))
-            async with conn.cursor() as cur:
-                await cur.executemany(
-                    """
-                    INSERT INTO chunks
-                        (page_id, chunk_index, content, char_count, embedding)
-                    VALUES (%s, %s, %s, %s, %s)
-                    """,
-                    [
-                        (
-                            page_id,
-                            chunk.chunk_index,
-                            chunk.content,
-                            chunk.char_count,
-                            HalfVector(vector),
-                        )
-                        for chunk, vector in zip(chunks, vectors, strict=True)
-                    ],
-                )
+            site_id = await db.ensure_site_origin(conn, base_url=normalize_origin(url))
+            page_id = await db.upsert_page(
+                conn,
+                site_id=site_id,
+                url=url,
+                title=page.title,
+                published_at=page.published_at,
+            )
+            await db.replace_page_chunks(
+                conn,
+                page_id=page_id,
+                chunks=[
+                    (
+                        chunk.chunk_index,
+                        chunk.content,
+                        chunk.char_count,
+                        vector,
+                    )
+                    for chunk, vector in zip(chunks, vectors, strict=True)
+                ],
+            )
         return IndexOutcome(url, "indexed", chunk_count=len(chunks))
 
     async def index_sitemap(
@@ -147,42 +145,5 @@ class IngestService:
 
     async def _ensure_meta(self, conn: psycopg.AsyncConnection) -> None:
         if not self._meta_checked:
-            await check_index_meta(conn, self.settings)
+            await db.check_index_meta(conn, self.settings)
             self._meta_checked = True
-
-    async def _upsert_site(self, conn: psycopg.AsyncConnection, url: str) -> int:
-        cur = await conn.execute(
-            """
-            INSERT INTO sites (base_url) VALUES (%s)
-            ON CONFLICT (base_url) DO UPDATE SET base_url = EXCLUDED.base_url
-            RETURNING id
-            """,
-            (normalize_origin(url),),
-        )
-        row = await cur.fetchone()
-        assert row is not None
-        return row[0]
-
-    async def _upsert_page(
-        self,
-        conn: psycopg.AsyncConnection,
-        site_id: int,
-        url: str,
-        page: ExtractedPage,
-    ) -> int:
-        cur = await conn.execute(
-            """
-            INSERT INTO pages (site_id, url, title, published_at, fetched_at)
-            VALUES (%s, %s, %s, %s, now())
-            ON CONFLICT (url) DO UPDATE SET
-                site_id = EXCLUDED.site_id,
-                title = EXCLUDED.title,
-                published_at = EXCLUDED.published_at,
-                fetched_at = now()
-            RETURNING id
-            """,
-            (site_id, url, page.title, page.published_at),
-        )
-        row = await cur.fetchone()
-        assert row is not None
-        return row[0]

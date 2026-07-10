@@ -3,8 +3,8 @@ from itertools import chain
 
 from psycopg_pool import AsyncConnectionPool
 
+from semsearch import db
 from semsearch.config import Settings
-from semsearch.db import check_index_meta
 from semsearch.embeddings.base import EmbeddingProvider
 from semsearch.models import Candidate, SearchResult
 from semsearch.search.base import Ranker, Retriever, final_score
@@ -69,7 +69,7 @@ class SearchService:
             return []
         if not self._meta_checked:
             async with self.pool.connection() as conn:
-                await check_index_meta(conn, self.settings)
+                await db.check_index_meta(conn, self.settings)
             self._meta_checked = True
 
         query_embedding = await self.embedder.embed_query(query)

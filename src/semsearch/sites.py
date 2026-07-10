@@ -9,8 +9,8 @@ from xml.etree import ElementTree
 from psycopg_pool import AsyncConnectionPool
 from trafilatura.feeds import FeedParameters, determine_feed, is_potential_feed
 
+from semsearch import db
 from semsearch.config import Settings
-from semsearch.db import check_index_meta
 from semsearch.ingest import sitemap
 from semsearch.ingest.sitemap import TextFetcher
 from semsearch.ingest.fetch import Fetcher, FetchResponse, FetchError
@@ -92,35 +92,19 @@ class SiteService:
         resolved_sitemap = await self._resolve_sitemap(start_url, sitemap_url)
         resolved_feed = await self._resolve_feed(start_url, feed_url)
         async with self.pool.connection() as conn, conn.transaction():
-            await check_index_meta(conn, self.settings)
-            cur = await conn.execute(
-                """
-                INSERT INTO sites (base_url, sitemap_url, feed_url)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (base_url) DO UPDATE SET
-                    sitemap_url = EXCLUDED.sitemap_url,
-                    feed_url = EXCLUDED.feed_url
-                RETURNING id, base_url, sitemap_url, feed_url, last_indexed_at,
-                          last_polled_at, feed_etag, feed_last_modified
-                """,
-                (base_url, resolved_sitemap, resolved_feed),
+            await db.check_index_meta(conn, self.settings)
+            row = await db.upsert_site_config(
+                conn,
+                base_url=base_url,
+                sitemap_url=resolved_sitemap,
+                feed_url=resolved_feed,
             )
-            row = await cur.fetchone()
-        assert row is not None
         return _site_from_row(row)
 
     async def list_sites(self) -> list[Site]:
         async with self.pool.connection() as conn:
-            await check_index_meta(conn, self.settings)
-            cur = await conn.execute(
-                """
-                SELECT id, base_url, sitemap_url, feed_url, last_indexed_at,
-                       last_polled_at, feed_etag, feed_last_modified
-                FROM sites
-                ORDER BY base_url
-                """
-            )
-            rows = await cur.fetchall()
+            await db.check_index_meta(conn, self.settings)
+            rows = await db.list_site_configs(conn)
         return [_site_from_row(row) for row in rows]
 
     async def get_site(self, site: str) -> Site:
@@ -129,17 +113,8 @@ class SiteService:
         except ValueError as exc:
             raise SiteError(str(exc)) from exc
         async with self.pool.connection() as conn:
-            await check_index_meta(conn, self.settings)
-            cur = await conn.execute(
-                """
-                SELECT id, base_url, sitemap_url, feed_url, last_indexed_at,
-                       last_polled_at, feed_etag, feed_last_modified
-                FROM sites
-                WHERE base_url = %s
-                """,
-                (base_url,),
-            )
-            row = await cur.fetchone()
+            await db.check_index_meta(conn, self.settings)
+            row = await db.find_site_config(conn, base_url=base_url)
         if row is None:
             raise SiteError(f"Unknown site: {base_url}")
         return _site_from_row(row)
@@ -161,10 +136,7 @@ class SiteService:
             on_progress=on_progress,
         )
         async with self.pool.connection() as conn, conn.transaction():
-            await conn.execute(
-                "UPDATE sites SET last_indexed_at = now() WHERE id = %s",
-                (record.id,),
-            )
+            await db.mark_site_indexed(conn, site_id=record.id)
         return outcomes
 
     async def poll_site(
@@ -270,15 +242,11 @@ class SiteService:
             _header(headers, "last-modified") if headers is not None else None
         )
         async with self.pool.connection() as conn, conn.transaction():
-            await conn.execute(
-                """
-                UPDATE sites
-                SET last_polled_at = now(),
-                    feed_etag = COALESCE(%s, feed_etag),
-                    feed_last_modified = COALESCE(%s, feed_last_modified)
-                WHERE id = %s
-                """,
-                (etag, last_modified, site_id),
+            await db.mark_site_polled(
+                conn,
+                site_id=site_id,
+                feed_etag=etag,
+                feed_last_modified=last_modified,
             )
 
 
