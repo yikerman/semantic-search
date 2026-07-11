@@ -28,3 +28,17 @@ def test_settings_reject_invalid_numeric_values(field: str, value: object):
 def test_settings_reject_chunk_overlap_at_least_window_size():
     with pytest.raises(ValidationError, match="CHUNK_OVERLAP"):
         Settings(chunk_chars=100, chunk_overlap=100)
+
+
+@pytest.mark.parametrize("level", ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
+def test_settings_accept_log_levels(level: str):
+    values: dict[str, Any] = {"log_level": level}
+
+    assert Settings(**values).log_level == level
+
+
+def test_settings_reject_invalid_log_level():
+    values: dict[str, Any] = {"log_level": "TRACE"}
+
+    with pytest.raises(ValidationError):
+        Settings(**values)

@@ -106,7 +106,7 @@ async def index_sitemap(
         return await index_url(page_url, force)
 
     def report_progress(outcome: IndexOutcome) -> None:
-        logger.info(
+        logger.debug(
             "[%s] %s %s",
             outcome.status,
             outcome.url,

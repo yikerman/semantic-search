@@ -1,14 +1,17 @@
 from functools import lru_cache
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+type LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql://semsearch:semsearch@localhost:5432/semsearch"
+    log_level: LogLevel = "INFO"
 
     embedding_api_base: str = "https://openrouter.ai/api/v1"
     embedding_api_key: str = ""

@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from collections import Counter
 from collections.abc import AsyncIterator, Coroutine
 from contextlib import asynccontextmanager
@@ -37,6 +36,7 @@ from semsearch.cli.sites import (
 from semsearch.share.config import Settings, get_settings
 from semsearch.share.db import create_pool
 from semsearch.share.embeddings import EmbeddingError, create_embeddings
+from semsearch.share.logging import configure_logging
 
 app = typer.Typer(help="semsearch: indie blog search engine admin tool")
 site_app = typer.Typer(help="Manage configured sites")
@@ -292,7 +292,7 @@ def _echo_poll_summary(poll: PollOutcome) -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.WARNING, format="%(message)s")
+    configure_logging(get_settings().log_level)
     app()
 
 

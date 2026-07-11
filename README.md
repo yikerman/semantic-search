@@ -92,6 +92,10 @@ Current stages:
 All settings come from environment variables or `.env`; see `.env.example`.
 Any OpenAI-compatible `/embeddings` endpoint works.
 
+Application logs are written to stderr as readable text. Set `LOG_LEVEL` to
+`DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`; the default is `INFO` for
+both the web app and CLI. Uvicorn continues to provide HTTP access logs.
+
 Changing `EMBEDDING_MODEL` or `EMBEDDING_DIM` invalidates the index:
 
 ```sh
