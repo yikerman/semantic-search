@@ -5,23 +5,58 @@ CREATE TABLE IF NOT EXISTS sites (
     id bigserial PRIMARY KEY,
     base_url text UNIQUE NOT NULL,
     sitemap_url text,
-    feed_url text,
-    last_indexed_at timestamptz,
+    feed_url text NOT NULL,
     last_polled_at timestamptz,
+    next_poll_at timestamptz,
     feed_etag text,
     feed_last_modified text,
+    poll_failures int NOT NULL DEFAULT 0,
+    poll_lease_until timestamptz,
+    poll_lease_token uuid,
+    sync_error text,
+    history_pending boolean NOT NULL DEFAULT false,
+    history_error text,
     added_at timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS sites_next_poll_idx ON sites (next_poll_at);
+
+CREATE TABLE IF NOT EXISTS crawl_jobs (
+    id bigserial PRIMARY KEY,
+    site_id bigint NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    url text UNIQUE NOT NULL,
+    source text NOT NULL,
+    attempt_count int NOT NULL DEFAULT 0,
+    next_attempt_at timestamptz DEFAULT now(),
+    lease_until timestamptz,
+    lease_token uuid,
+    last_error text,
+    failed_at timestamptz,
+    discovered_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS crawl_jobs_ready_idx
+    ON crawl_jobs (next_attempt_at, lease_until)
+    WHERE next_attempt_at IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS crawl_jobs_site_idx
+    ON crawl_jobs (site_id, next_attempt_at);
+
+CREATE INDEX IF NOT EXISTS crawl_jobs_failed_idx
+    ON crawl_jobs (failed_at DESC)
+    WHERE failed_at IS NOT NULL;
 
 -- pages divided into several chunks
 CREATE TABLE IF NOT EXISTS pages (
     id bigserial PRIMARY KEY,
-    site_id bigint REFERENCES sites(id) ON DELETE CASCADE,
+    site_id bigint NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
     url text UNIQUE NOT NULL,
     title text,
     published_at timestamptz,
     fetched_at timestamptz NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS pages_site_idx ON pages (site_id);
 
 -- each chunk hold an embedding
 CREATE TABLE IF NOT EXISTS chunks (

@@ -14,7 +14,7 @@ def create_pool(settings: Settings) -> AsyncConnectionPool:
     return AsyncConnectionPool(
         settings.database_url,
         min_size=1,
-        max_size=10,
+        max_size=settings.database_pool_max_size,
         open=False,
         configure=_configure,
     )

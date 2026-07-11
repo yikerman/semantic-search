@@ -24,6 +24,23 @@ def test_schema_indexes_chunk_content_for_full_text_search():
     assert "USING gin (search_vector)" in schema
 
 
+def test_schema_adds_durable_crawl_and_poll_state():
+    schema = load_schema_sql(Settings(embedding_model="test-model", embedding_dim=2))
+
+    assert "CREATE TABLE IF NOT EXISTS crawl_jobs" in schema
+    assert "url text UNIQUE NOT NULL" in schema
+    assert "next_poll_at timestamptz" in schema
+    assert "history_pending boolean NOT NULL DEFAULT false" in schema
+    assert "feed_url text NOT NULL" in schema
+    assert "site_id bigint NOT NULL REFERENCES sites" in schema
+    assert "poll_lease_token uuid" in schema
+    assert "lease_token uuid" in schema
+    assert "failed_at timestamptz" in schema
+    assert "WHERE next_attempt_at IS NOT NULL" in schema
+    assert "ALTER TABLE" not in schema
+    assert "last_indexed_at" not in schema
+
+
 class EmptyCursor:
     async def fetchall(self):
         return []

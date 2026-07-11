@@ -14,23 +14,18 @@ def test_cli_is_admin_only():
     assert "site" in result.stdout
 
 
-def test_site_poll_validates_selector_before_opening_services(monkeypatch):
-    def fail_if_opened():
-        raise AssertionError("services opened")
-
-    monkeypatch.setattr(cli_module, "open_services", fail_if_opened)
+def test_removed_bulk_and_index_commands_are_not_exposed():
     runner = CliRunner()
 
-    missing = runner.invoke(cli_module.app, ["site", "poll"])
-    conflicting = runner.invoke(
-        cli_module.app,
-        ["site", "poll", "--site", "https://example.com", "--all"],
-    )
+    site_help = runner.invoke(cli_module.app, ["site", "--help"])
+    poll_help = runner.invoke(cli_module.app, ["site", "poll", "--help"])
+    root_help = runner.invoke(cli_module.app, ["--help"])
 
-    assert missing.exit_code == 1
-    assert "Pass a site origin or --all" in missing.output
-    assert conflicting.exit_code == 1
-    assert "Use either a site origin or --all" in conflicting.output
+    assert site_help.exit_code == 0
+    assert "index" not in site_help.stdout
+    assert "--all" not in poll_help.stdout
+    assert "--force" not in poll_help.stdout
+    assert "worker" in root_help.stdout
 
 
 def test_web_template_shows_rrf_and_native_scores_without_styling():

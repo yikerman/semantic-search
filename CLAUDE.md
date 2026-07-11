@@ -57,15 +57,14 @@ The `semsearch.cli.ingest` pipeline is:
 4. embed document chunks
 5. store pages and chunks
 
-URL is page identity. Existing URLs are skipped unless `--force` is set.
+URL is page identity. Existing URLs are append-only and skipped.
 `robots.txt` is used for sitemap discovery; `Disallow` is not enforced yet.
 
 Configured sites use normalized origins as human-readable ids and surrogate
 `sites.id` values for foreign keys. Sitemap is optional; feed-only sites are
-indexed by `site poll`. Public indexing commands operate on configured sites
-only; keep arbitrary URL and sitemap ingest behind the service layer. `site poll
---all` polls sites concurrently with a bounded concurrency limit; feed entries
-within one site remain sequential.
+indexed by `site poll`. The continuous `worker` scatters polling, discovers
+current and historical URLs into a durable queue, and ingests queued pages with
+bounded concurrency and retry backoff.
 
 ## Constraints
 
@@ -86,7 +85,8 @@ within one site remain sequential.
 podman compose up -d db
 cp .env.example .env
 uv run semsearch init-db
-uv run semsearch site add https://some.blog/ --sitemap auto --feed auto --index
+uv run semsearch site add https://some.blog/ --sitemap auto --feed auto
+uv run semsearch worker
 uv run uvicorn semsearch.web.app:app --reload
 uv run pytest
 uv run ruff check

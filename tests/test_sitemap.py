@@ -1,8 +1,11 @@
+import pytest
+
+from xml.etree import ElementTree
+
 from semsearch.cli.ingest.sitemap import (
+    SitemapError,
     collect_page_urls,
     discover_sitemaps,
-    filter_urls,
-    is_site_root,
     parse_robots_sitemaps,
     parse_sitemap,
 )
@@ -70,22 +73,18 @@ def test_parse_robots_sitemaps():
     ]
 
 
-def test_filter_urls():
-    urls = [
-        "https://blog.example/posts/a",
-        "https://blog.example/tags/python",
-        "ftp://blog.example/posts/b",
-    ]
-    assert filter_urls(urls) == urls[:2]
-    assert filter_urls(urls, include=r"/posts/") == ["https://blog.example/posts/a"]
-    assert filter_urls(urls, exclude=r"/tags/") == ["https://blog.example/posts/a"]
-
-
-def test_is_site_root():
-    assert is_site_root("https://blog.example")
-    assert is_site_root("https://blog.example/")
-    assert not is_site_root("https://blog.example/sitemap.xml")
-    assert not is_site_root("https://blog.example/?page=2")
+def test_parse_sitemap_rejects_entity_expansion():
+    billion_laughs = """<?xml version="1.0"?>
+    <!DOCTYPE urlset [
+      <!ENTITY lol "lol">
+      <!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">
+      <!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;">
+    ]>
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url><loc>&lol3;</loc></url>
+    </urlset>"""
+    with pytest.raises(ElementTree.ParseError):
+        parse_sitemap(billion_laughs)
 
 
 class FakeFetcher:
@@ -141,6 +140,53 @@ async def test_collect_page_urls_recurses_and_dedupes():
         "https://b.example/cycle.xml",
         "https://b.example/index.xml",
     ]
+
+
+async def test_collect_page_urls_stops_at_eligible_limit():
+    index_xml = """<sitemapindex>
+      <sitemap><loc>https://b.example/a.xml</loc></sitemap>
+      <sitemap><loc>https://b.example/b.xml</loc></sitemap>
+    </sitemapindex>"""
+    page_xml = """<urlset>
+      <url><loc>https://b.example/about/</loc></url>
+      <url><loc>https://b.example/post-1</loc></url>
+      <url><loc>https://b.example/post-2</loc></url>
+    </urlset>"""
+    fetcher = FakeFetcher(
+        {
+            "https://b.example/index.xml": index_xml,
+            "https://b.example/a.xml": page_xml,
+            "https://b.example/b.xml": URLSET_NO_NAMESPACE,
+        }
+    )
+
+    pages = await collect_page_urls(
+        fetcher.fetch_text,
+        "https://b.example/index.xml",
+        accept=lambda url: "/post-" in url,
+        limit=2,
+        strict=True,
+    )
+
+    assert pages == ["https://b.example/post-1", "https://b.example/post-2"]
+    assert "https://b.example/b.xml" not in fetcher.requested
+
+
+async def test_collect_page_urls_strict_mode_propagates_child_failure():
+    fetcher = FakeFetcher(
+        {
+            "https://b.example/index.xml": SITEMAP_INDEX.replace(
+                "blog.example", "b.example"
+            )
+        }
+    )
+
+    with pytest.raises(SitemapError, match="sitemap-posts.xml"):
+        await collect_page_urls(
+            fetcher.fetch_text,
+            "https://b.example/index.xml",
+            strict=True,
+        )
 
 
 async def test_discover_sitemaps_uses_path_fallbacks_without_robots():

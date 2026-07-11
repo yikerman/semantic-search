@@ -3,11 +3,12 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import LiteralString, cast
+from uuid import UUID, uuid4
 
 import psycopg
 from pgvector import HalfVector
 
-from semsearch.cli.models import Site
+from semsearch.cli.models import CrawlJob, FailedCrawlJob, Site
 from semsearch.share.config import Settings
 
 
@@ -24,11 +25,16 @@ class IndexStats:
     site_count: int
     page_count: int
     chunk_count: int
+    queued_count: int
+    retrying_count: int
+    failed_count: int
 
 
 SITE_COLUMNS = """
-id, base_url, sitemap_url, feed_url, last_indexed_at,
-last_polled_at, feed_etag, feed_last_modified
+sites.id, sites.base_url, sites.sitemap_url, sites.feed_url,
+sites.last_polled_at, sites.next_poll_at, sites.feed_etag,
+sites.feed_last_modified, sites.poll_failures, sites.sync_error,
+sites.history_pending, sites.history_error
 """
 
 
@@ -50,11 +56,14 @@ async def fetch_index_stats(conn: psycopg.AsyncConnection) -> IndexStats:
         """
         SELECT (SELECT count(*) FROM sites),
                (SELECT count(*) FROM pages),
-               (SELECT count(*) FROM chunks)
+               (SELECT count(*) FROM chunks),
+               (SELECT count(*) FROM crawl_jobs WHERE failed_at IS NULL),
+               (SELECT count(*) FROM crawl_jobs
+                WHERE failed_at IS NULL AND attempt_count > 0),
+               (SELECT count(*) FROM crawl_jobs WHERE failed_at IS NOT NULL)
         """
     )
-    row = cast(tuple, await cur.fetchone())
-    return IndexStats(*row)
+    return IndexStats(*cast(tuple, await cur.fetchone()))
 
 
 async def upsert_site_config(
@@ -62,31 +71,61 @@ async def upsert_site_config(
     *,
     base_url: str,
     sitemap_url: str | None,
-    feed_url: str | None,
+    feed_url: str,
+    initial_poll_delay_seconds: int,
 ) -> Site:
     cur = await conn.execute(
         f"""
-        INSERT INTO sites (base_url, sitemap_url, feed_url)
-        VALUES (%s, %s, %s)
+        INSERT INTO sites (base_url, sitemap_url, feed_url, next_poll_at)
+        VALUES (%s, %s, %s, now() + make_interval(secs => %s))
         ON CONFLICT (base_url) DO UPDATE SET
             sitemap_url = EXCLUDED.sitemap_url,
-            feed_url = EXCLUDED.feed_url
+            feed_url = EXCLUDED.feed_url,
+            feed_etag = CASE
+                WHEN sites.feed_url = EXCLUDED.feed_url THEN sites.feed_etag
+                ELSE NULL
+            END,
+            feed_last_modified = CASE
+                WHEN sites.feed_url = EXCLUDED.feed_url THEN sites.feed_last_modified
+                ELSE NULL
+            END,
+            next_poll_at = CASE
+                WHEN sites.feed_url = EXCLUDED.feed_url THEN sites.next_poll_at
+                ELSE EXCLUDED.next_poll_at
+            END,
+            history_pending = CASE
+                WHEN sites.feed_url = EXCLUDED.feed_url THEN sites.history_pending
+                ELSE false
+            END,
+            history_error = CASE
+                WHEN sites.feed_url = EXCLUDED.feed_url THEN sites.history_error
+                ELSE NULL
+            END,
+            poll_failures = CASE
+                WHEN sites.feed_url = EXCLUDED.feed_url THEN sites.poll_failures
+                ELSE 0
+            END,
+            sync_error = CASE
+                WHEN sites.feed_url = EXCLUDED.feed_url THEN sites.sync_error
+                ELSE NULL
+            END,
+            poll_lease_until = CASE
+                WHEN sites.feed_url = EXCLUDED.feed_url THEN sites.poll_lease_until
+                ELSE NULL
+            END,
+            poll_lease_token = CASE
+                WHEN sites.feed_url = EXCLUDED.feed_url THEN sites.poll_lease_token
+                ELSE NULL
+            END
         RETURNING {SITE_COLUMNS}
         """,
-        (base_url, sitemap_url, feed_url),
+        (base_url, sitemap_url, feed_url, initial_poll_delay_seconds),
     )
-    row = cast(tuple, await cur.fetchone())
-    return Site(*row)
+    return Site(*cast(tuple, await cur.fetchone()))
 
 
 async def list_site_configs(conn: psycopg.AsyncConnection) -> list[Site]:
-    cur = await conn.execute(
-        f"""
-        SELECT {SITE_COLUMNS}
-        FROM sites
-        ORDER BY base_url
-        """
-    )
+    cur = await conn.execute(f"SELECT {SITE_COLUMNS} FROM sites ORDER BY base_url")
     return [Site(*row) for row in await cur.fetchall()]
 
 
@@ -94,54 +133,324 @@ async def find_site_config(
     conn: psycopg.AsyncConnection, *, base_url: str
 ) -> Site | None:
     cur = await conn.execute(
-        f"""
-        SELECT {SITE_COLUMNS}
-        FROM sites
-        WHERE base_url = %s
-        """,
+        f"SELECT {SITE_COLUMNS} FROM sites WHERE base_url = %s",
         (base_url,),
     )
     row = await cur.fetchone()
     return None if row is None else Site(*row)
 
 
-async def mark_site_indexed(conn: psycopg.AsyncConnection, *, site_id: int) -> None:
-    await conn.execute(
-        "UPDATE sites SET last_indexed_at = now() WHERE id = %s",
-        (site_id,),
+async def known_urls(conn: psycopg.AsyncConnection, urls: Sequence[str]) -> set[str]:
+    if not urls:
+        return set()
+    cur = await conn.execute(
+        """
+        SELECT url FROM pages WHERE url = ANY(%s)
+        UNION
+        SELECT url FROM crawl_jobs WHERE url = ANY(%s)
+        """,
+        (list(urls), list(urls)),
     )
+    return {row[0] for row in await cur.fetchall()}
 
 
-async def mark_site_polled(
+async def enqueue_urls(
     conn: psycopg.AsyncConnection,
     *,
     site_id: int,
-    feed_etag: str | None,
-    feed_last_modified: str | None,
+    urls: Sequence[str],
+    source: str,
+) -> int:
+    if not urls:
+        return 0
+    cur = await conn.execute(
+        """
+        INSERT INTO crawl_jobs (site_id, url, source)
+        SELECT %s, candidate.url, %s
+        FROM unnest(%s::text[]) AS candidate(url)
+        WHERE NOT EXISTS (SELECT 1 FROM pages WHERE pages.url = candidate.url)
+        ON CONFLICT (url) DO NOTHING
+        """,
+        (site_id, source, list(urls)),
+    )
+    return cur.rowcount
+
+
+async def mark_history_pending(
+    conn: psycopg.AsyncConnection, *, site_id: int, lease_token: UUID
+) -> None:
+    await conn.execute(
+        """
+        UPDATE sites
+        SET history_pending = true, history_error = NULL
+        WHERE id = %s AND poll_lease_token = %s
+        """,
+        (site_id, lease_token),
+    )
+
+
+async def finish_history(
+    conn: psycopg.AsyncConnection,
+    *,
+    site_id: int,
+    lease_token: UUID,
+    error: str | None = None,
+) -> None:
+    await conn.execute(
+        """
+        UPDATE sites
+        SET history_pending = false, history_error = %s
+        WHERE id = %s AND poll_lease_token = %s
+        """,
+        (error, site_id, lease_token),
+    )
+
+
+async def mark_poll_succeeded(
+    conn: psycopg.AsyncConnection,
+    *,
+    site_id: int,
+    etag: str | None,
+    modified: str | None,
+    interval_seconds: int,
+    lease_token: UUID,
+    sync_error: str | None = None,
 ) -> None:
     await conn.execute(
         """
         UPDATE sites
         SET last_polled_at = now(),
+            next_poll_at = now() + make_interval(secs => %s),
             feed_etag = COALESCE(%s, feed_etag),
-            feed_last_modified = COALESCE(%s, feed_last_modified)
-        WHERE id = %s
+            feed_last_modified = COALESCE(%s, feed_last_modified),
+            poll_failures = 0,
+            poll_lease_until = NULL,
+            poll_lease_token = NULL,
+            sync_error = %s
+        WHERE id = %s AND poll_lease_token = %s
         """,
-        (feed_etag, feed_last_modified, site_id),
+        (interval_seconds, etag, modified, sync_error, site_id, lease_token),
     )
 
 
-async def ensure_site_origin(conn: psycopg.AsyncConnection, *, base_url: str) -> int:
+async def mark_poll_failed(
+    conn: psycopg.AsyncConnection, *, site_id: int, lease_token: UUID, error: str
+) -> None:
+    await conn.execute(
+        """
+        UPDATE sites
+        SET poll_failures = poll_failures + 1,
+            next_poll_at = now() + make_interval(
+                secs => LEAST(3600, 300 * (2 ^ LEAST(poll_failures, 4)))
+            ),
+            poll_lease_until = NULL,
+            poll_lease_token = NULL,
+            sync_error = %s
+        WHERE id = %s AND poll_lease_token = %s
+        """,
+        (error, site_id, lease_token),
+    )
+
+
+async def scatter_poll_schedule(
+    conn: psycopg.AsyncConnection, *, interval_seconds: int
+) -> None:
+    await conn.execute(
+        """
+        WITH overdue AS (
+            SELECT id,
+                   row_number() OVER (ORDER BY id) - 1 AS position,
+                   count(*) OVER () AS total
+            FROM sites
+            WHERE next_poll_at IS NULL OR next_poll_at <= now()
+        )
+        UPDATE sites
+        SET next_poll_at = now() + make_interval(
+            secs => (%s * overdue.position / GREATEST(overdue.total, 1))::int
+        )
+        FROM overdue
+        WHERE sites.id = overdue.id
+        """,
+        (interval_seconds,),
+    )
+
+
+async def claim_due_site(
+    conn: psycopg.AsyncConnection, *, lease_seconds: int = 600
+) -> tuple[Site, UUID] | None:
+    token = uuid4()
+    cur = await conn.execute(
+        f"""
+        WITH candidate AS (
+            SELECT id
+            FROM sites
+            WHERE next_poll_at <= now()
+              AND (poll_lease_until IS NULL OR poll_lease_until < now())
+            ORDER BY next_poll_at, id
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+        )
+        UPDATE sites
+        SET poll_lease_until = now() + make_interval(secs => %s),
+            poll_lease_token = %s
+        FROM candidate
+        WHERE sites.id = candidate.id
+        RETURNING {SITE_COLUMNS}, sites.poll_lease_token
+        """,
+        (lease_seconds, token),
+    )
+    row = await cur.fetchone()
+    return None if row is None else (Site(*row[:-1]), cast(UUID, row[-1]))
+
+
+async def claim_site(
+    conn: psycopg.AsyncConnection, *, site_id: int, lease_seconds: int = 600
+) -> tuple[Site, UUID] | None:
+    token = uuid4()
+    cur = await conn.execute(
+        f"""
+        UPDATE sites
+        SET poll_lease_until = now() + make_interval(secs => %s),
+            poll_lease_token = %s
+        WHERE id = %s
+          AND (poll_lease_until IS NULL OR poll_lease_until < now())
+        RETURNING {SITE_COLUMNS}, sites.poll_lease_token
+        """,
+        (lease_seconds, token, site_id),
+    )
+    row = await cur.fetchone()
+    return None if row is None else (Site(*row[:-1]), cast(UUID, row[-1]))
+
+
+async def renew_poll_lease(
+    conn: psycopg.AsyncConnection,
+    *,
+    site_id: int,
+    lease_token: UUID,
+    lease_seconds: int = 600,
+) -> bool:
     cur = await conn.execute(
         """
-        INSERT INTO sites (base_url) VALUES (%s)
-        ON CONFLICT (base_url) DO UPDATE SET base_url = EXCLUDED.base_url
-        RETURNING id
+        UPDATE sites
+        SET poll_lease_until = now() + make_interval(secs => %s)
+        WHERE id = %s AND poll_lease_token = %s
         """,
-        (base_url,),
+        (lease_seconds, site_id, lease_token),
     )
-    row = cast(tuple, await cur.fetchone())
-    return row[0]
+    return cur.rowcount == 1
+
+
+async def claim_crawl_job(
+    conn: psycopg.AsyncConnection,
+    *,
+    site_id: int | None = None,
+    lease_seconds: int = 600,
+) -> CrawlJob | None:
+    token = uuid4()
+    cur = await conn.execute(
+        """
+        WITH candidate AS (
+            SELECT id
+            FROM crawl_jobs
+            WHERE next_attempt_at IS NOT NULL
+              AND next_attempt_at <= now()
+              AND (lease_until IS NULL OR lease_until < now())
+              AND (%s::bigint IS NULL OR site_id = %s::bigint)
+            ORDER BY next_attempt_at, id
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+        )
+        UPDATE crawl_jobs
+        SET lease_until = now() + make_interval(secs => %s),
+            lease_token = %s
+        FROM candidate
+        WHERE crawl_jobs.id = candidate.id
+        RETURNING crawl_jobs.id, crawl_jobs.site_id, crawl_jobs.url,
+                  crawl_jobs.source, crawl_jobs.attempt_count,
+                  crawl_jobs.lease_token
+        """,
+        (site_id, site_id, lease_seconds, token),
+    )
+    row = await cur.fetchone()
+    return None if row is None else CrawlJob(*row)
+
+
+async def retry_crawl_job(
+    conn: psycopg.AsyncConnection,
+    *,
+    job_id: int,
+    lease_token: UUID,
+    error: str,
+    delay_seconds: int,
+) -> None:
+    await conn.execute(
+        """
+        UPDATE crawl_jobs
+        SET attempt_count = attempt_count + 1,
+            next_attempt_at = now() + make_interval(secs => %s),
+            lease_until = NULL,
+            lease_token = NULL,
+            last_error = %s
+        WHERE id = %s AND lease_token = %s
+        """,
+        (delay_seconds, error, job_id, lease_token),
+    )
+
+
+async def fail_crawl_job(
+    conn: psycopg.AsyncConnection,
+    *,
+    job_id: int,
+    lease_token: UUID,
+    error: str,
+) -> None:
+    await conn.execute(
+        """
+        UPDATE crawl_jobs
+        SET attempt_count = attempt_count + 1,
+            next_attempt_at = NULL,
+            lease_until = NULL,
+            lease_token = NULL,
+            last_error = %s,
+            failed_at = now()
+        WHERE id = %s AND lease_token = %s
+        """,
+        (error, job_id, lease_token),
+    )
+
+
+async def renew_crawl_lease(
+    conn: psycopg.AsyncConnection,
+    *,
+    job_id: int,
+    lease_token: UUID,
+    lease_seconds: int = 600,
+) -> bool:
+    cur = await conn.execute(
+        """
+        UPDATE crawl_jobs
+        SET lease_until = now() + make_interval(secs => %s)
+        WHERE id = %s AND lease_token = %s
+        """,
+        (lease_seconds, job_id, lease_token),
+    )
+    return cur.rowcount == 1
+
+
+async def list_failed_jobs(
+    conn: psycopg.AsyncConnection, *, limit: int = 10
+) -> list[FailedCrawlJob]:
+    cur = await conn.execute(
+        """
+        SELECT url, attempt_count, last_error
+        FROM crawl_jobs
+        WHERE failed_at IS NOT NULL
+        ORDER BY failed_at DESC
+        LIMIT %s
+        """,
+        (limit,),
+    )
+    return [FailedCrawlJob(row[0], row[1], row[2]) for row in await cur.fetchall()]
 
 
 async def page_exists(conn: psycopg.AsyncConnection, *, url: str) -> bool:
@@ -149,29 +458,40 @@ async def page_exists(conn: psycopg.AsyncConnection, *, url: str) -> bool:
     return await cur.fetchone() is not None
 
 
-async def upsert_page(
+async def complete_existing_job(
+    conn: psycopg.AsyncConnection, *, job_id: int, lease_token: UUID
+) -> None:
+    await conn.execute(
+        "DELETE FROM crawl_jobs WHERE id = %s AND lease_token = %s",
+        (job_id, lease_token),
+    )
+
+
+async def insert_page(
     conn: psycopg.AsyncConnection,
     *,
     site_id: int,
     url: str,
     title: str | None,
     published_at: datetime | None,
-) -> int:
+) -> int | None:
+    """Insert a new page, returning its id, or ``None`` if the URL already exists.
+
+    URL is page identity and existing URLs are append-only, so a conflict means
+    another writer already indexed this page; the caller must skip rather than
+    overwrite its chunks.
+    """
     cur = await conn.execute(
         """
         INSERT INTO pages (site_id, url, title, published_at, fetched_at)
         VALUES (%s, %s, %s, %s, now())
-        ON CONFLICT (url) DO UPDATE SET
-            site_id = EXCLUDED.site_id,
-            title = EXCLUDED.title,
-            published_at = EXCLUDED.published_at,
-            fetched_at = now()
+        ON CONFLICT (url) DO NOTHING
         RETURNING id
         """,
         (site_id, url, title, published_at),
     )
-    row = cast(tuple, await cur.fetchone())
-    return row[0]
+    row = await cur.fetchone()
+    return None if row is None else row[0]
 
 
 async def replace_page_chunks(

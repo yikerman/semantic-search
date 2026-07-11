@@ -32,6 +32,8 @@ uv sync
 podman compose up -d db
 cp .env.example .env
 uv run semsearch init-db
+uv run semsearch site add https://some.blog/ --sitemap auto --feed auto
+uv run semsearch worker
 ```
 
 Set `EMBEDDING_API_KEY` in `.env` before indexing.
@@ -55,23 +57,37 @@ uv run pyright
 
 ```sh
 uv run semsearch site add https://example.blog --sitemap auto --feed auto
-uv run semsearch site add https://another.blog --sitemap auto --feed auto --index
-uv run semsearch site index https://example.blog
-uv run semsearch site poll --site https://example.blog
-uv run semsearch site poll --all --concurrency 4
+uv run semsearch site poll https://example.blog
 uv run semsearch site list
-uv run semsearch site index https://example.blog --force
+uv run semsearch worker
 uv run semsearch status
 ```
 
-`site add` stores crawl config, and `site index` runs sitemap ingest for that
-configured site. Sites can be feed-only; use `--sitemap none` when no sitemap
-exists, then `site poll` to ingest feed entries. `site poll --all` polls
-configured sites concurrently, bounded by `SITE_POLL_CONCURRENCY` or
-`--concurrency`.
+`site add` requires an RSS or Atom feed and optionally stores a sitemap for
+historical fallback. `site poll` immediately synchronizes one site. `worker` is
+the continuous process: it scatters sites across twelve-hour polling windows,
+uses conditional feed requests, and ingests discovered posts from a durable
+queue. Run it under a process supervisor in production.
 
-Existing URLs are skipped without fetching. Use `--force` to refresh and
-re-embed a page.
+When a current feed contains only previously unseen URLs, historical discovery
+follows RFC 5005 links, then WordPress feed pagination when applicable, and
+finally the configured sitemap. A historical run stops and reports an error
+after 2,000 unique post URLs. Sites without any usable historical source are
+reported as potentially partial instead of being marked fully synchronized.
+
+Existing URLs are append-only and are skipped before page fetching or
+embedding. Transient page failures remain queued with bounded retry backoff;
+repeated permanent failures are retained and reported by `semsearch status`.
+
+Bulk-import the indieblog.page export with the standalone importer:
+
+```sh
+uv run python scripts/import_indieblog_feeds.py --dry-run
+uv run python scripts/import_indieblog_feeds.py
+```
+
+The importer selects one feed per normalized origin, skips already configured
+sites, and reports invalid, unreachable, and duplicate-origin feed rows.
 
 Search is available through the web page. The CLI is reserved for index and
 site administration.
@@ -112,5 +128,6 @@ cp .env.example .env
 podman compose --profile deploy up -d --build
 ```
 
-The app listens on port 8000. For public deployment, change the Postgres
-password and put TLS in front of the app.
+The deploy profile starts the web app and continuous ingestion worker. The app
+listens on port 8000. For public deployment, change the Postgres password and
+put TLS in front of the app.

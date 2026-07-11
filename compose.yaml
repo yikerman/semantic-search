@@ -29,5 +29,18 @@ services:
     ports:
       - "8000:8000"
 
+  worker:
+    build:
+      context: .
+      dockerfile: Containerfile
+    profiles: ["deploy"]
+    command: ["/app/.venv/bin/semsearch", "worker"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://semsearch:semsearch@db:5432/semsearch
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   pgdata:

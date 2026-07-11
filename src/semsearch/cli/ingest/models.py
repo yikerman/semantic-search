@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-IndexStatus = Literal["indexed", "skipped", "no_content", "error"]
+IndexStatus = Literal["indexed", "skipped", "error"]
 
 
 @dataclass(frozen=True, slots=True)
