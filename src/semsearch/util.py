@@ -12,7 +12,7 @@ async def map_concurrently(
     limit: int,
     func: Callable[[ItemT], Awaitable[ResultT]],
 ) -> list[ResultT]:
-    semaphore = asyncio.Semaphore(max(1, limit))
+    semaphore = asyncio.Semaphore(limit)
 
     async def run(item: ItemT) -> ResultT:
         async with semaphore:

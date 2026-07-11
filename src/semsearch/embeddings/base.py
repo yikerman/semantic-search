@@ -1,7 +1,5 @@
-from typing import Protocol
+from collections.abc import Awaitable, Callable
 
 
-class EmbeddingProvider(Protocol):
-    async def embed_documents(self, texts: list[str]) -> list[list[float]]: ...
-
-    async def embed_query(self, text: str) -> list[float]: ...
+type EmbedDocuments = Callable[[list[str]], Awaitable[list[list[float]]]]
+type EmbedQuery = Callable[[str], Awaitable[list[float]]]

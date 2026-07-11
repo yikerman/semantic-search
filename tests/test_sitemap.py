@@ -129,7 +129,7 @@ async def test_collect_page_urls_recurses_and_dedupes():
             "https://b.example/b.xml": b_xml,
         }
     )
-    pages = await collect_page_urls(fetcher, "https://b.example/index.xml")
+    pages = await collect_page_urls(fetcher.fetch_text, "https://b.example/index.xml")
     assert pages == [
         "https://b.example/post-1",
         "https://b.example/post-2",
@@ -145,7 +145,7 @@ async def test_collect_page_urls_recurses_and_dedupes():
 
 async def test_discover_sitemaps_uses_path_fallbacks_without_robots():
     fetcher = FakeFetcher({})
-    pages = await discover_sitemaps(fetcher, "https://blog.example/blog/")
+    pages = await discover_sitemaps(fetcher.fetch_text, "https://blog.example/blog/")
     assert pages == [
         "https://blog.example/blog/sitemap.xml",
         "https://blog.example/blog/wp-sitemap.xml",

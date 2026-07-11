@@ -1,22 +1,17 @@
-from dataclasses import dataclass
+from functools import partial
 
 from psycopg import sql
 
 from semsearch.search.filters import SqlPredicate, compile_filters
 
 
-@dataclass(frozen=True)
-class ExampleFilter:
-    column: str
-    value: object
-
-    def compile(self, page_alias: str) -> SqlPredicate:
-        return SqlPredicate(
-            sql.SQL("{}.{} = %s").format(
-                sql.Identifier(page_alias), sql.Identifier(self.column)
-            ),
-            (self.value,),
-        )
+def column_equals(page_alias: str, *, column: str, value: object) -> SqlPredicate:
+    return SqlPredicate(
+        sql.SQL("{}.{} = %s").format(
+            sql.Identifier(page_alias), sql.Identifier(column)
+        ),
+        (value,),
+    )
 
 
 def test_no_filters_compile_to_true():
@@ -28,7 +23,10 @@ def test_no_filters_compile_to_true():
 
 def test_filters_combine_with_and_and_preserve_parameter_order():
     predicate = compile_filters(
-        [ExampleFilter("site_id", 3), ExampleFilter("published_at", "2025-01-01")],
+        [
+            partial(column_equals, column="site_id", value=3),
+            partial(column_equals, column="published_at", value="2025-01-01"),
+        ],
         page_alias="p",
     )
 

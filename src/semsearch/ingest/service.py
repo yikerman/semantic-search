@@ -1,14 +1,12 @@
 import logging
 from collections.abc import Callable
 
-import psycopg
 from psycopg_pool import AsyncConnectionPool
 
 from semsearch import db
-from semsearch.config import Settings
-from semsearch.embeddings.base import EmbeddingProvider
+from semsearch.embeddings.base import EmbedDocuments
 from semsearch.ingest import sitemap
-from semsearch.ingest.chunk import CharChunker
+from semsearch.ingest.chunk import Chunker
 from semsearch.ingest.extract import extract_page
 from semsearch.ingest.fetch import Fetcher
 from semsearch.ingest.models import IndexOutcome
@@ -26,27 +24,17 @@ class IngestService:
     def __init__(
         self,
         pool: AsyncConnectionPool,
-        embedder: EmbeddingProvider,
-        settings: Settings,
-        *,
-        fetcher: Fetcher | None = None,
-        chunker: CharChunker | None = None,
-        meta_guard: db.IndexMetaGuard | None = None,
+        embed_documents: EmbedDocuments,
+        fetcher: Fetcher,
+        chunker: Chunker,
     ) -> None:
         self.pool = pool
-        self.embedder = embedder
-        self.settings = settings
-        self._owns_fetcher = fetcher is None
-        self.fetcher = fetcher or _make_fetcher(settings)
-        self.chunker = chunker or CharChunker(
-            chunk_chars=settings.chunk_chars,
-            chunk_overlap=settings.chunk_overlap,
-        )
-        self.meta_guard = meta_guard or db.IndexMetaGuard(settings)
+        self.embed_documents = embed_documents
+        self.fetcher = fetcher
+        self.chunker = chunker
 
-    async def index_url(self, url: str, *, force: bool = False) -> IndexOutcome:
+    async def index_url(self, url: str, force: bool = False) -> IndexOutcome:
         async with self.pool.connection() as conn:
-            await self._ensure_meta(conn)
             if not force:
                 if await db.page_exists(conn, url=url):
                     return IndexOutcome(url, "skipped", "already indexed")
@@ -56,14 +44,14 @@ class IngestService:
         if page is None:
             return IndexOutcome(url, "no_content", "no extractable article text")
 
-        chunks = self.chunker.chunk(page.text)
+        chunks = self.chunker(page.text)
         if not chunks:
             return IndexOutcome(url, "no_content", "text produced no chunks")
         embed_inputs = [
             f"{page.title}\n\n{chunk.content}" if page.title else chunk.content
             for chunk in chunks
         ]
-        vectors = await self.embedder.embed_documents(embed_inputs)
+        vectors = await self.embed_documents(embed_inputs)
 
         async with self.pool.connection() as conn, conn.transaction():
             site_id = await db.ensure_site_origin(conn, base_url=normalize_origin(url))
@@ -92,20 +80,22 @@ class IngestService:
     async def index_sitemap(
         self,
         url: str,
+        force: bool = False,
+        on_progress: Callable[[IndexOutcome], None] | None = None,
         *,
         include: str | None = None,
         exclude: str | None = None,
-        force: bool = False,
-        on_progress: Callable[[IndexOutcome], None] | None = None,
     ) -> list[IndexOutcome]:
         if sitemap.is_site_root(url):
-            sitemap_urls = await sitemap.discover_sitemaps(self.fetcher, url)
+            sitemap_urls = await sitemap.discover_sitemaps(self.fetcher.fetch_text, url)
         else:
             sitemap_urls = [url]
 
         page_urls: dict[str, None] = {}
         for sitemap_url in sitemap_urls:
-            for page_url in await sitemap.collect_page_urls(self.fetcher, sitemap_url):
+            for page_url in await sitemap.collect_page_urls(
+                self.fetcher.fetch_text, sitemap_url
+            ):
                 page_urls.setdefault(page_url)
         filtered = sitemap.filter_urls(
             list(page_urls), include=include, exclude=exclude
@@ -136,25 +126,3 @@ class IngestService:
             on_progress=report_progress,
         )
         return outcomes
-
-    async def aclose(self) -> None:
-        if self._owns_fetcher:
-            await self.fetcher.aclose()
-
-    async def __aenter__(self) -> "IngestService":
-        return self
-
-    async def __aexit__(self, *exc_info: object) -> None:
-        await self.aclose()
-
-    async def _ensure_meta(self, conn: psycopg.AsyncConnection) -> None:
-        await self.meta_guard.ensure(conn)
-
-
-def _make_fetcher(settings: Settings) -> Fetcher:
-    return Fetcher(
-        user_agent=settings.user_agent,
-        timeout=settings.fetch_timeout_seconds,
-        delay_seconds=settings.fetch_delay_seconds,
-        impersonate=settings.fetch_impersonate,
-    )

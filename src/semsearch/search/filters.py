@@ -1,6 +1,5 @@
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Protocol
 
 from psycopg import sql
 
@@ -11,14 +10,13 @@ class SqlPredicate:
     params: tuple[object, ...] = ()
 
 
-class SearchFilter(Protocol):
-    def compile(self, page_alias: str) -> SqlPredicate: ...
+type SearchFilter = Callable[[str], SqlPredicate]
 
 
 def compile_filters(
     filters: Sequence[SearchFilter], *, page_alias: str
 ) -> SqlPredicate:
-    predicates = [item.compile(page_alias) for item in filters]
+    predicates = [item(page_alias) for item in filters]
     if not predicates:
         return SqlPredicate(sql.SQL("TRUE"))
     return SqlPredicate(

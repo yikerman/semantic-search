@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Protocol
+from collections.abc import Awaitable, Callable
 from urllib.parse import urljoin, urlsplit
 from xml.etree import ElementTree
 
@@ -19,8 +19,7 @@ _SITEMAP_NAMESPACES = (
 _LOC_TAGS = frozenset(ns + "loc" for ns in _SITEMAP_NAMESPACES)
 
 
-class TextFetcher(Protocol):
-    async def fetch_text(self, url: str) -> str: ...
+type FetchText = Callable[[str], Awaitable[str]]
 
 
 def parse_sitemap(xml: str) -> tuple[list[str], list[str]]:
@@ -65,11 +64,11 @@ def is_site_root(url: str) -> bool:
     return parts.path in ("", "/") and not parts.query
 
 
-async def discover_sitemaps(fetcher: TextFetcher, site_url: str) -> list[str]:
+async def discover_sitemaps(fetch_text: FetchText, site_url: str) -> list[str]:
     parts = urlsplit(site_url)
     origin = f"{parts.scheme}://{parts.netloc}"
     try:
-        robots = await fetcher.fetch_text(urljoin(origin, "/robots.txt"))
+        robots = await fetch_text(urljoin(origin, "/robots.txt"))
         sitemaps = parse_robots_sitemaps(robots, origin)
         if sitemaps:
             return sitemaps
@@ -89,7 +88,7 @@ async def discover_sitemaps(fetcher: TextFetcher, site_url: str) -> list[str]:
 
 
 async def collect_page_urls(
-    fetcher: TextFetcher, sitemap_url: str, *, warn: bool = True
+    fetch_text: FetchText, sitemap_url: str, *, warn: bool = True
 ) -> list[str]:
     seen_sitemaps: set[str] = set()
     pages: dict[str, None] = {}
@@ -99,7 +98,7 @@ async def collect_page_urls(
             return
         seen_sitemaps.add(url)
         try:
-            xml = await fetcher.fetch_text(url)
+            xml = await fetch_text(url)
             page_urls, children = parse_sitemap(xml)
         except (FetchError, ElementTree.ParseError) as exc:
             if warn:

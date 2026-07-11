@@ -1,11 +1,10 @@
 import asyncio
 
-from semsearch.config import Settings
 from semsearch.ingest.fetch import FetchError, FetchResponse
 from semsearch.ingest.models import IndexOutcome
+from semsearch.models import Site
 from semsearch.sites import (
     PollOutcome,
-    Site,
     SiteService,
     canonicalize_site_url,
     discover_feed_url,
@@ -24,16 +23,13 @@ class FakeFetcher:
         except KeyError as exc:
             raise FetchError(url) from exc
 
-    async def aclose(self) -> None:
-        raise AssertionError("injected fetcher must remain caller-owned")
-
 
 class FakeUrlIndexer:
     def __init__(self, failing_url: str) -> None:
         self.failing_url = failing_url
         self.indexed: list[tuple[str, bool]] = []
 
-    async def index_url(self, url: str, *, force: bool = False) -> IndexOutcome:
+    async def index_url(self, url: str, force: bool = False) -> IndexOutcome:
         self.indexed.append((url, force))
         if url == self.failing_url:
             raise FetchError("stale feed entry")
@@ -109,7 +105,7 @@ class FakeConcurrentPollingSiteService(SiteService):
     async def poll_site(
         self,
         site: str,
-        indexer,
+        index_url,
         *,
         force: bool = False,
         on_progress=None,
@@ -147,19 +143,8 @@ async def test_discover_feed_url_uses_alternate_link():
     </html>
     """
     fetcher = FakeFetcher({"https://example.com/blog/": html})
-    feed = await discover_feed_url(fetcher, "https://example.com/blog/")
+    feed = await discover_feed_url(fetcher.fetch_text, "https://example.com/blog/")
     assert feed == "https://example.com/blog/feed/"
-
-
-async def test_site_service_does_not_close_injected_fetcher():
-    fetcher = FakeFetcher({})
-    service = SiteService(
-        None,  # type: ignore[arg-type]
-        Settings(),
-        fetcher=fetcher,  # type: ignore[arg-type]
-    )
-
-    await service.aclose()
 
 
 async def test_discover_feed_url_resolves_relative_links_from_page_url():
@@ -171,7 +156,7 @@ async def test_discover_feed_url_resolves_relative_links_from_page_url():
     </html>
     """
     fetcher = FakeFetcher({"https://example.com/blog/": html})
-    feed = await discover_feed_url(fetcher, "https://example.com/blog/")
+    feed = await discover_feed_url(fetcher.fetch_text, "https://example.com/blog/")
     assert feed == "https://example.com/blog/feed/"
 
 
@@ -182,7 +167,7 @@ async def test_discover_feed_url_accepts_feed_url():
     </rss>
     """
     fetcher = FakeFetcher({"https://example.com/feed.xml": rss})
-    feed = await discover_feed_url(fetcher, "https://example.com/feed.xml")
+    feed = await discover_feed_url(fetcher.fetch_text, "https://example.com/feed.xml")
     assert feed == "https://example.com/feed.xml"
 
 
@@ -264,7 +249,7 @@ async def test_poll_site_keeps_polling_after_url_failure():
 
     outcome = await service.poll_site(
         "https://example.com",
-        indexer,
+        indexer.index_url,
         force=True,
         on_progress=progress.append,
     )
@@ -286,9 +271,8 @@ async def test_poll_site_keeps_polling_after_url_failure():
 
 async def test_poll_all_polls_sites_concurrently_with_limit():
     service = FakeConcurrentPollingSiteService()
-    task = asyncio.create_task(
-        service.poll_all(FakeUrlIndexer("https://never.example"), concurrency=2)
-    )
+    indexer = FakeUrlIndexer("https://never.example")
+    task = asyncio.create_task(service.poll_all(indexer.index_url, concurrency=2))
 
     await asyncio.wait_for(service.two_active.wait(), timeout=1)
     service.release.set()

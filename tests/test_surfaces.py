@@ -1,4 +1,4 @@
-from semsearch.models import SearchResult
+from semsearch.models import Candidate
 from typer.testing import CliRunner
 
 from semsearch.cli import app
@@ -20,11 +20,12 @@ def test_web_template_shows_rrf_and_native_scores_without_styling():
         q="query",
         error=None,
         results=[
-            SearchResult(
+            Candidate(
+                chunk_id=1,
                 page_id=1,
                 url="https://example.com/post",
                 title="Post",
-                snippet="Snippet",
+                content="Snippet",
                 scores={"dense": 0.8765, "rrf": 0.01234567},
             )
         ],

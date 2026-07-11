@@ -1,5 +1,7 @@
 from functools import lru_cache
+from typing import Annotated, Self
 
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,22 +13,28 @@ class Settings(BaseSettings):
     embedding_api_base: str = "https://openrouter.ai/api/v1"
     embedding_api_key: str = ""
     embedding_model: str = "qwen/qwen3-embedding-4b"
-    embedding_dim: int = 2560
-    embedding_batch_size: int = 32
+    embedding_dim: Annotated[int, Field(gt=0)] = 2560
+    embedding_batch_size: Annotated[int, Field(gt=0)] = 32
 
     query_instruction: str = (
         "Given a web search query, retrieve relevant passages that answer the query"
     )
 
-    chunk_chars: int = 1600
-    chunk_overlap: int = 240
+    chunk_chars: Annotated[int, Field(gt=0)] = 1600
+    chunk_overlap: Annotated[int, Field(ge=0)] = 240
 
-    fetch_delay_seconds: float = 1.0
-    fetch_timeout_seconds: float = 20.0
+    fetch_delay_seconds: Annotated[float, Field(ge=0)] = 1.0
+    fetch_timeout_seconds: Annotated[float, Field(gt=0)] = 20.0
     fetch_impersonate: str = "chrome"
     user_agent: str = "semsearch/0.1"
 
-    site_poll_concurrency: int = 4
+    site_poll_concurrency: Annotated[int, Field(gt=0)] = 4
+
+    @model_validator(mode="after")
+    def validate_chunk_window(self) -> Self:
+        if self.chunk_overlap >= self.chunk_chars:
+            raise ValueError("CHUNK_OVERLAP must be smaller than CHUNK_CHARS")
+        return self
 
 
 @lru_cache

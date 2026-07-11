@@ -1,6 +1,5 @@
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Protocol
 
 from semsearch.models import Candidate
 from semsearch.search.filters import SearchFilter
@@ -20,19 +19,6 @@ class RankedRun:
     candidates: tuple[Candidate, ...]
 
 
-class Retriever(Protocol):
-    name: str
-
-    async def retrieve(self, request: RetrievalRequest) -> RankedRun: ...
-
-
-class Reranker(Protocol):
-    name: str
-
-    async def rerank(
-        self, query: str, candidates: Sequence[Candidate]
-    ) -> RankedRun: ...
-
-
-class Fusion(Protocol):
-    def fuse(self, runs: Sequence[RankedRun]) -> list[Candidate]: ...
+type Retriever = Callable[[RetrievalRequest], Awaitable[RankedRun]]
+type Reranker = Callable[[str, Sequence[Candidate]], Awaitable[RankedRun]]
+type Fusion = Callable[[Sequence[RankedRun]], list[Candidate]]

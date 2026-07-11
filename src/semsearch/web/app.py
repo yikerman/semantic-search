@@ -1,4 +1,5 @@
 from contextlib import AsyncExitStack, asynccontextmanager
+from functools import partial
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -6,10 +7,11 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from semsearch.config import get_settings
-from semsearch.db import IndexMetaError, IndexMetaGuard, create_pool, ping
+from semsearch.db import create_pool, ping
 from semsearch.embeddings import get_embedding_provider
 from semsearch.embeddings.openai_compat import EmbeddingError
-from semsearch.search.service import SearchService
+from semsearch.search.dense import retrieve_dense
+from semsearch.search.pipeline import search
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
@@ -22,11 +24,10 @@ async def lifespan(app: FastAPI):
         pool = create_pool(settings)
         await stack.enter_async_context(pool)
         app.state.pool = pool
-        app.state.search = SearchService(
-            pool,
-            embedder,
-            settings,
-            meta_guard=IndexMetaGuard(settings),
+        app.state.search = partial(
+            search,
+            embed_query=embedder.embed_query,
+            retrievers=(partial(retrieve_dense, pool=pool),),
         )
         yield
 
@@ -38,10 +39,11 @@ def create_app() -> FastAPI:
     async def index(request: Request, q: str = ""):
         results = None
         error = None
-        if q.strip():
+        query = q.strip()
+        if query:
             try:
-                results = await request.app.state.search.search(q)
-            except (IndexMetaError, EmbeddingError) as exc:
+                results = await request.app.state.search(query)
+            except EmbeddingError as exc:
                 error = str(exc)
         return templates.TemplateResponse(
             request, "index.html", {"q": q, "results": results, "error": error}

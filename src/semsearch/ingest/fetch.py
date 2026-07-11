@@ -7,6 +7,8 @@ from typing import Any, cast
 from curl_cffi.requests import AsyncSession
 from curl_cffi.requests.exceptions import RequestException
 
+from semsearch.config import Settings
+
 
 class FetchError(RuntimeError):
     pass
@@ -48,8 +50,7 @@ class Fetcher:
     async def fetch_text(
         self, url: str, *, headers: Mapping[str, str] | None = None
     ) -> str:
-        response = await self.fetch_response(url, headers=headers)
-        assert response is not None
+        response = cast(FetchResponse, await self.fetch_response(url, headers=headers))
         return response.text
 
     async def fetch_response(
@@ -88,3 +89,12 @@ class Fetcher:
 
     async def __aexit__(self, *exc_info: object) -> None:
         await self.aclose()
+
+
+def create_fetcher(settings: Settings) -> Fetcher:
+    return Fetcher(
+        user_agent=settings.user_agent,
+        timeout=settings.fetch_timeout_seconds,
+        delay_seconds=settings.fetch_delay_seconds,
+        impersonate=settings.fetch_impersonate,
+    )

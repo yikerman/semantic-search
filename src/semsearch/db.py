@@ -1,4 +1,3 @@
-import asyncio
 import importlib.resources
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -12,39 +11,8 @@ from pgvector.psycopg import register_vector_async
 from psycopg_pool import AsyncConnectionPool
 
 from semsearch.config import Settings
+from semsearch.models import Site
 from semsearch.search.filters import SqlPredicate
-
-
-class IndexMetaError(RuntimeError):
-    pass
-
-
-class IndexMetaGuard:
-    def __init__(self, settings: Settings) -> None:
-        self.settings = settings
-        self._checked = False
-        self._lock = asyncio.Lock()
-
-    async def ensure(self, conn: psycopg.AsyncConnection) -> None:
-        if self._checked:
-            return
-        async with self._lock:
-            if self._checked:
-                return
-            await check_index_meta(conn, self.settings)
-            self._checked = True
-
-
-@dataclass(frozen=True, slots=True)
-class SiteRecord:
-    id: int
-    base_url: str
-    sitemap_url: str | None
-    feed_url: str | None
-    last_indexed_at: datetime | None
-    last_polled_at: datetime | None
-    feed_etag: str | None
-    feed_last_modified: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,8 +38,6 @@ class IndexStats:
     site_count: int
     page_count: int
     chunk_count: int
-    embedding_model: str
-    embedding_dim: int
 
 
 SITE_COLUMNS = """
@@ -103,25 +69,7 @@ def create_pool(settings: Settings) -> AsyncConnectionPool:
 async def init_schema(settings: Settings) -> None:
     async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
         await conn.execute(load_schema_sql(settings))
-        await conn.execute(
-            """
-            INSERT INTO index_meta (id, embedding_model, embedding_dim)
-            VALUES (1, %s, %s)
-            ON CONFLICT (id) DO NOTHING
-            """,
-            (settings.embedding_model, settings.embedding_dim),
-        )
-        await _verify_index_meta(conn, settings)
         await conn.commit()
-
-
-async def check_index_meta(conn: psycopg.AsyncConnection, settings: Settings) -> None:
-    try:
-        await _verify_index_meta(conn, settings)
-    except psycopg.errors.UndefinedTable:
-        raise IndexMetaError(
-            "Database schema not initialized. Run: semsearch init-db"
-        ) from None
 
 
 async def ping(conn: psycopg.AsyncConnection) -> None:
@@ -133,15 +81,11 @@ async def fetch_index_stats(conn: psycopg.AsyncConnection) -> IndexStats:
         """
         SELECT (SELECT count(*) FROM sites),
                (SELECT count(*) FROM pages),
-               (SELECT count(*) FROM chunks),
-               (SELECT embedding_model FROM index_meta WHERE id = 1),
-               (SELECT embedding_dim FROM index_meta WHERE id = 1)
+               (SELECT count(*) FROM chunks)
         """
     )
-    row = await cur.fetchone()
-    assert row is not None
-    sites, pages, chunks, model, dim = row
-    return IndexStats(sites, pages, chunks, model, dim)
+    row = cast(tuple, await cur.fetchone())
+    return IndexStats(*row)
 
 
 async def upsert_site_config(
@@ -150,7 +94,7 @@ async def upsert_site_config(
     base_url: str,
     sitemap_url: str | None,
     feed_url: str | None,
-) -> SiteRecord:
+) -> Site:
     cur = await conn.execute(
         f"""
         INSERT INTO sites (base_url, sitemap_url, feed_url)
@@ -162,12 +106,11 @@ async def upsert_site_config(
         """,
         (base_url, sitemap_url, feed_url),
     )
-    row = await cur.fetchone()
-    assert row is not None
-    return SiteRecord(*row)
+    row = cast(tuple, await cur.fetchone())
+    return Site(*row)
 
 
-async def list_site_configs(conn: psycopg.AsyncConnection) -> list[SiteRecord]:
+async def list_site_configs(conn: psycopg.AsyncConnection) -> list[Site]:
     cur = await conn.execute(
         f"""
         SELECT {SITE_COLUMNS}
@@ -175,12 +118,12 @@ async def list_site_configs(conn: psycopg.AsyncConnection) -> list[SiteRecord]:
         ORDER BY base_url
         """
     )
-    return [SiteRecord(*row) for row in await cur.fetchall()]
+    return [Site(*row) for row in await cur.fetchall()]
 
 
 async def find_site_config(
     conn: psycopg.AsyncConnection, *, base_url: str
-) -> SiteRecord | None:
+) -> Site | None:
     cur = await conn.execute(
         f"""
         SELECT {SITE_COLUMNS}
@@ -190,7 +133,7 @@ async def find_site_config(
         (base_url,),
     )
     row = await cur.fetchone()
-    return None if row is None else SiteRecord(*row)
+    return None if row is None else Site(*row)
 
 
 async def mark_site_indexed(conn: psycopg.AsyncConnection, *, site_id: int) -> None:
@@ -228,8 +171,7 @@ async def ensure_site_origin(conn: psycopg.AsyncConnection, *, base_url: str) ->
         """,
         (base_url,),
     )
-    row = await cur.fetchone()
-    assert row is not None
+    row = cast(tuple, await cur.fetchone())
     return row[0]
 
 
@@ -259,8 +201,7 @@ async def upsert_page(
         """,
         (site_id, url, title, published_at),
     )
-    row = await cur.fetchone()
-    assert row is not None
+    row = cast(tuple, await cur.fetchone())
     return row[0]
 
 
@@ -314,20 +255,3 @@ async def fetch_dense_candidate_rows(
         (embedding, *predicate.params, embedding, limit),
     )
     return [DenseCandidateRecord(*row) for row in await cur.fetchall()]
-
-
-async def _verify_index_meta(conn: psycopg.AsyncConnection, settings: Settings) -> None:
-    cur = await conn.execute(
-        "SELECT embedding_model, embedding_dim FROM index_meta WHERE id = 1"
-    )
-    row = await cur.fetchone()
-    if row is None:
-        raise IndexMetaError("index_meta is empty. Run: semsearch init-db")
-    model, dim = row
-    if model != settings.embedding_model or dim != settings.embedding_dim:
-        raise IndexMetaError(
-            f"Index was built with {model} ({dim} dims) but the configured model is "
-            f"{settings.embedding_model} ({settings.embedding_dim} dims). "
-            "Changing embedding models requires re-indexing from scratch "
-            "(drop the database volume and run init-db again)."
-        )

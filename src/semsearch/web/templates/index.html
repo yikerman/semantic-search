@@ -30,7 +30,7 @@
           &middot; {{ name }} {{ "%.3f" | format(score) }}
           {% endfor %}
         </small>
-        <p>{{ result.snippet[:500] }}{% if result.snippet | length > 500 %}&hellip;{% endif %}</p>
+        <p>{{ result.content[:500] }}{% if result.content | length > 500 %}&hellip;{% endif %}</p>
       </li>
       {% endfor %}
     </ol>

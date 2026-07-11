@@ -29,19 +29,3 @@ async def test_map_concurrently_limits_work_and_preserves_order():
 
     assert max_active == 2
     assert results == [10, 20, 30]
-
-
-async def test_map_concurrently_clamps_limit_to_one():
-    active = 0
-    max_active = 0
-
-    async def work(value: int) -> int:
-        nonlocal active, max_active
-        active += 1
-        max_active = max(max_active, active)
-        await asyncio.sleep(0)
-        active -= 1
-        return value
-
-    assert await map_concurrently([1, 2, 3], limit=0, func=work) == [1, 2, 3]
-    assert max_active == 1

@@ -1,5 +1,6 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 
+-- a site with several pages
 CREATE TABLE IF NOT EXISTS sites (
     id bigserial PRIMARY KEY,
     base_url text UNIQUE NOT NULL,
@@ -12,6 +13,7 @@ CREATE TABLE IF NOT EXISTS sites (
     added_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- pages divided into several chunks
 CREATE TABLE IF NOT EXISTS pages (
     id bigserial PRIMARY KEY,
     site_id bigint REFERENCES sites(id) ON DELETE CASCADE,
@@ -21,6 +23,7 @@ CREATE TABLE IF NOT EXISTS pages (
     fetched_at timestamptz NOT NULL
 );
 
+-- each chunk hold an embedding
 CREATE TABLE IF NOT EXISTS chunks (
     id bigserial PRIMARY KEY,
     page_id bigint NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
@@ -33,9 +36,3 @@ CREATE TABLE IF NOT EXISTS chunks (
 
 CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw_idx
     ON chunks USING hnsw (embedding halfvec_cosine_ops);
-
-CREATE TABLE IF NOT EXISTS index_meta (
-    id int PRIMARY KEY CHECK (id = 1),
-    embedding_model text NOT NULL,
-    embedding_dim int NOT NULL
-);

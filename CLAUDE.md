@@ -9,14 +9,14 @@ Two entrypoints share one service layer:
 
 - `semsearch.cli`: Typer admin commands
 - `semsearch.web.app`: FastAPI search page
-- `db.py`: async psycopg3, raw SQL, schema init, embedding-space guard
+- `db.py`: async psycopg3, raw SQL, schema init, pool lifecycle
 - `sites.py`: site config and admin lifecycle
 - `ingest/`: fetch, extract, chunk, embed, store
 - `search/`: retrievers, rankers, page grouping
 
 ## Search
 
-`SearchService.search()` compiles filters, embeds the query, runs retrievers,
+`search()` compiles filters, embeds the query, runs retrievers,
 builds a candidate union, runs optional rerankers, applies RRF, then returns the
 best chunk per page.
 
@@ -36,7 +36,7 @@ The pipeline is:
 
 1. fetch HTML with `curl-cffi`
 2. extract main text with `trafilatura`
-3. split with `CharChunker`
+3. split with `char_chunks`
 4. embed document chunks
 5. store pages and chunks
 

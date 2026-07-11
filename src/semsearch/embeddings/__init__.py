@@ -1,8 +1,13 @@
 from semsearch.config import Settings
-from semsearch.embeddings.base import EmbeddingProvider
+from semsearch.embeddings.base import EmbedDocuments, EmbedQuery
 from semsearch.embeddings.openai_compat import OpenAICompatEmbeddings
 
-__all__ = ["EmbeddingProvider", "OpenAICompatEmbeddings", "get_embedding_provider"]
+__all__ = [
+    "EmbedDocuments",
+    "EmbedQuery",
+    "OpenAICompatEmbeddings",
+    "get_embedding_provider",
+]
 
 
 def get_embedding_provider(settings: Settings) -> OpenAICompatEmbeddings:

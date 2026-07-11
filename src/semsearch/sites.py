@@ -1,8 +1,7 @@
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
 import json
-from typing import Protocol
+from typing import cast
 from urllib.parse import urljoin, urlsplit, urlunsplit
 from xml.etree import ElementTree
 
@@ -10,12 +9,12 @@ from psycopg_pool import AsyncConnectionPool
 from trafilatura.feeds import FeedParameters, determine_feed, is_potential_feed
 
 from semsearch import db
-from semsearch.config import Settings
 from semsearch.ingest import sitemap
-from semsearch.ingest.sitemap import TextFetcher
+from semsearch.ingest.sitemap import FetchText
 from semsearch.ingest.fetch import Fetcher, FetchResponse, FetchError
 from semsearch.ingest.models import IndexOutcome
 from semsearch.ingest.outcomes import collect_index_outcomes
+from semsearch.models import Site
 from semsearch.url import normalize_origin, normalize_url
 from semsearch.util import map_concurrently
 
@@ -24,32 +23,11 @@ class SiteError(RuntimeError):
     pass
 
 
-class SitemapIndexer(Protocol):
-    async def index_sitemap(
-        self,
-        url: str,
-        *,
-        include: str | None = None,
-        exclude: str | None = None,
-        force: bool = False,
-        on_progress: Callable[[IndexOutcome], None] | None = None,
-    ) -> list[IndexOutcome]: ...
-
-
-class UrlIndexer(Protocol):
-    async def index_url(self, url: str, *, force: bool = False) -> IndexOutcome: ...
-
-
-@dataclass(slots=True)
-class Site:
-    id: int
-    base_url: str
-    sitemap_url: str | None
-    feed_url: str | None
-    last_indexed_at: datetime | None
-    last_polled_at: datetime | None
-    feed_etag: str | None
-    feed_last_modified: str | None
+type ProgressCallback = Callable[[IndexOutcome], None]
+type IndexSitemap = Callable[
+    [str, bool, ProgressCallback | None], Awaitable[list[IndexOutcome]]
+]
+type IndexUrl = Callable[[str, bool], Awaitable[IndexOutcome]]
 
 
 @dataclass(slots=True)
@@ -63,16 +41,10 @@ class SiteService:
     def __init__(
         self,
         pool: AsyncConnectionPool,
-        settings: Settings,
-        *,
-        fetcher: Fetcher | None = None,
-        meta_guard: db.IndexMetaGuard | None = None,
+        fetcher: Fetcher,
     ) -> None:
         self.pool = pool
-        self.settings = settings
-        self._owns_fetcher = fetcher is None
-        self.fetcher = fetcher or _make_fetcher(settings)
-        self.meta_guard = meta_guard or db.IndexMetaGuard(settings)
+        self.fetcher = fetcher
 
     async def add_site(
         self,
@@ -90,20 +62,17 @@ class SiteService:
         resolved_sitemap = await self._resolve_sitemap(start_url, sitemap_url)
         resolved_feed = await self._resolve_feed(start_url, feed_url)
         async with self.pool.connection() as conn, conn.transaction():
-            await self.meta_guard.ensure(conn)
             row = await db.upsert_site_config(
                 conn,
                 base_url=base_url,
                 sitemap_url=resolved_sitemap,
                 feed_url=resolved_feed,
             )
-        return _site_from_row(row)
+        return row
 
     async def list_sites(self) -> list[Site]:
         async with self.pool.connection() as conn:
-            await self.meta_guard.ensure(conn)
-            rows = await db.list_site_configs(conn)
-        return [_site_from_row(row) for row in rows]
+            return await db.list_site_configs(conn)
 
     async def get_site(self, site: str) -> Site:
         try:
@@ -111,28 +80,23 @@ class SiteService:
         except ValueError as exc:
             raise SiteError(str(exc)) from exc
         async with self.pool.connection() as conn:
-            await self.meta_guard.ensure(conn)
             row = await db.find_site_config(conn, base_url=base_url)
         if row is None:
             raise SiteError(f"Unknown site: {base_url}")
-        return _site_from_row(row)
+        return row
 
     async def index_site(
         self,
         site: str,
-        indexer: SitemapIndexer,
+        index_sitemap: IndexSitemap,
         *,
         force: bool = False,
-        on_progress: Callable[[IndexOutcome], None] | None = None,
+        on_progress: ProgressCallback | None = None,
     ) -> list[IndexOutcome]:
         record = await self.get_site(site)
         if record.sitemap_url is None:
             raise SiteError(f"No sitemap configured for {record.base_url}")
-        outcomes = await indexer.index_sitemap(
-            record.sitemap_url,
-            force=force,
-            on_progress=on_progress,
-        )
+        outcomes = await index_sitemap(record.sitemap_url, force, on_progress)
         async with self.pool.connection() as conn, conn.transaction():
             await db.mark_site_indexed(conn, site_id=record.id)
         return outcomes
@@ -140,10 +104,10 @@ class SiteService:
     async def poll_site(
         self,
         site: str,
-        indexer: UrlIndexer,
+        index_url: IndexUrl,
         *,
         force: bool = False,
-        on_progress: Callable[[IndexOutcome], None] | None = None,
+        on_progress: ProgressCallback | None = None,
     ) -> PollOutcome:
         record = await self.get_site(site)
         if record.feed_url is None:
@@ -162,7 +126,7 @@ class SiteService:
         )
 
         async def index_one(url: str) -> IndexOutcome:
-            return await indexer.index_url(url, force=force)
+            return await index_url(url, force)
 
         outcomes = await collect_index_outcomes(
             urls,
@@ -174,10 +138,10 @@ class SiteService:
 
     async def poll_all(
         self,
-        indexer: UrlIndexer,
+        index_url: IndexUrl,
         *,
         force: bool = False,
-        on_progress: Callable[[IndexOutcome], None] | None = None,
+        on_progress: ProgressCallback | None = None,
         concurrency: int = 4,
     ) -> list[PollOutcome]:
         feed_sites = [site for site in await self.list_sites() if site.feed_url]
@@ -185,32 +149,24 @@ class SiteService:
         async def poll_one(site: Site) -> PollOutcome:
             return await self.poll_site(
                 site.base_url,
-                indexer,
+                index_url,
                 force=force,
                 on_progress=on_progress,
             )
 
         return await map_concurrently(feed_sites, limit=concurrency, func=poll_one)
 
-    async def aclose(self) -> None:
-        if self._owns_fetcher:
-            await self.fetcher.aclose()
-
-    async def __aenter__(self) -> "SiteService":
-        return self
-
-    async def __aexit__(self, *exc_info: object) -> None:
-        await self.aclose()
-
     async def _resolve_sitemap(self, start_url: str, value: str) -> str | None:
         match value:
             case "none":
                 return None
             case "auto":
-                candidates = await sitemap.discover_sitemaps(self.fetcher, start_url)
+                candidates = await sitemap.discover_sitemaps(
+                    self.fetcher.fetch_text, start_url
+                )
                 for candidate in candidates:
                     if await sitemap.collect_page_urls(
-                        self.fetcher, candidate, warn=False
+                        self.fetcher.fetch_text, candidate, warn=False
                     ):
                         return candidate
                 return None
@@ -222,19 +178,19 @@ class SiteService:
             case "none":
                 return None
             case "auto":
-                return await discover_feed_url(self.fetcher, start_url)
+                return await discover_feed_url(self.fetcher.fetch_text, start_url)
             case _:
                 return urljoin(start_url, value)
 
     async def _fetch_feed(self, site: Site, *, use_cache: bool) -> FetchResponse | None:
-        assert site.feed_url is not None
+        feed_url = cast(str, site.feed_url)
         headers: dict[str, str] = {}
         if use_cache and site.feed_etag:
             headers["If-None-Match"] = site.feed_etag
         if use_cache and site.feed_last_modified:
             headers["If-Modified-Since"] = site.feed_last_modified
         return await self.fetcher.fetch_response(
-            site.feed_url,
+            feed_url,
             headers=headers or None,
             allow_not_modified=True,
         )
@@ -255,11 +211,11 @@ class SiteService:
             )
 
 
-async def discover_feed_url(fetcher: TextFetcher, site_url: str) -> str | None:
+async def discover_feed_url(fetch_text: FetchText, site_url: str) -> str | None:
     start_url = normalize_url(site_url)
     parts = urlsplit(start_url)
     try:
-        html = await fetcher.fetch_text(start_url)
+        html = await fetch_text(start_url)
     except FetchError:
         return None
 
@@ -351,25 +307,3 @@ def _local_name(tag: str) -> str:
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:
     return headers.get(name) or headers.get(name.title()) or headers.get(name.upper())
-
-
-def _site_from_row(row: db.SiteRecord) -> Site:
-    return Site(
-        id=row.id,
-        base_url=row.base_url,
-        sitemap_url=row.sitemap_url,
-        feed_url=row.feed_url,
-        last_indexed_at=row.last_indexed_at,
-        last_polled_at=row.last_polled_at,
-        feed_etag=row.feed_etag,
-        feed_last_modified=row.feed_last_modified,
-    )
-
-
-def _make_fetcher(settings: Settings) -> Fetcher:
-    return Fetcher(
-        user_agent=settings.user_agent,
-        timeout=settings.fetch_timeout_seconds,
-        delay_seconds=settings.fetch_delay_seconds,
-        impersonate=settings.fetch_impersonate,
-    )

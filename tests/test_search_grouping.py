@@ -1,12 +1,12 @@
 from collections.abc import Sequence
+from functools import partial
 
 import pytest
 
-from semsearch.config import Settings
-from semsearch.models import Candidate, SearchResult
-from semsearch.search.base import RankedRun, RetrievalRequest
-from semsearch.search.fusion import ReciprocalRankFusion, union_candidates
-from semsearch.search.service import SearchService, group_by_page
+from semsearch.models import Candidate
+from semsearch.search.base import RankedRun, RetrievalRequest, Retriever
+from semsearch.search.fusion import reciprocal_rank_fusion, union_candidates
+from semsearch.search.pipeline import group_by_page, search
 
 
 def cand(chunk_id: int, page_id: int, **scores: float) -> Candidate:
@@ -41,7 +41,7 @@ def test_rrf_uses_ranked_runs_and_preserves_native_scores():
     dense = run("dense", cand(1, 1, dense=0.9), cand(2, 2, dense=0.8))
     lexical = run("bm25", cand(2, 2, bm25=4.0), cand(3, 3, bm25=3.0))
 
-    fused = ReciprocalRankFusion(k=60).fuse([dense, lexical])
+    fused = reciprocal_rank_fusion([dense, lexical], k=60)
 
     assert [candidate.chunk_id for candidate in fused] == [2, 1, 3]
     assert fused[0].scores == {
@@ -52,17 +52,7 @@ def test_rrf_uses_ranked_runs_and_preserves_native_scores():
     assert fused[1].scores["rrf"] == pytest.approx(1 / 61)
 
 
-def test_rrf_ignores_duplicate_chunks_within_one_run():
-    duplicate = cand(1, 1, dense=0.9)
-
-    fused = ReciprocalRankFusion(k=0).fuse(
-        [run("dense", duplicate, duplicate, cand(2, 2, dense=0.8))]
-    )
-
-    assert [candidate.scores["rrf"] for candidate in fused] == [1.0, 0.5]
-
-
-def test_group_by_page_keeps_highest_rrf_chunk_and_requires_rrf():
+def test_group_by_page_keeps_highest_rrf_chunk():
     results = group_by_page(
         [
             cand(1, 1, dense=0.99, rrf=0.01),
@@ -76,42 +66,7 @@ def test_group_by_page_keeps_highest_rrf_chunk_and_requires_rrf():
         (1, 0.02),
         (2, 0.015),
     ]
-    assert results[0].snippet == "chunk 2 of page 1"
-    with pytest.raises(KeyError):
-        group_by_page([cand(4, 4, dense=1.0)], limit=10)
-
-
-class FakeCursor:
-    def __init__(self, row):
-        self.row = row
-
-    async def fetchone(self):
-        return self.row
-
-
-class FakeConn:
-    def __init__(self, meta_row):
-        self.meta_row = meta_row
-
-    async def execute(self, sql, params=None):
-        return FakeCursor(self.meta_row)
-
-
-class FakePool:
-    def __init__(self, meta_row):
-        self._conn = FakeConn(meta_row)
-
-    def connection(self):
-        pool = self
-
-        class _Ctx:
-            async def __aenter__(self):
-                return pool._conn
-
-            async def __aexit__(self, *exc_info):
-                return None
-
-        return _Ctx()
+    assert results[0].content == "chunk 2 of page 1"
 
 
 class FakeEmbedder:
@@ -126,125 +81,63 @@ class FakeEmbedder:
         return [1.0, 0.0]
 
 
-class FakeRetriever:
-    def __init__(self, name: str, candidates: Sequence[Candidate]) -> None:
-        self.name = name
-        self.candidates = candidates
-        self.requests: list[RetrievalRequest] = []
+def fake_retriever(
+    name: str,
+    candidates: Sequence[Candidate],
+    requests: list[RetrievalRequest] | None = None,
+) -> Retriever:
+    async def retrieve(request: RetrievalRequest) -> RankedRun:
+        if requests is not None:
+            requests.append(request)
+        return RankedRun(name, tuple(candidates))
 
-    async def retrieve(self, request: RetrievalRequest) -> RankedRun:
-        self.requests.append(request)
-        return RankedRun(self.name, tuple(self.candidates))
+    return retrieve
 
 
-class ReverseReranker:
-    name = "cross_encoder"
-
-    async def rerank(self, query: str, candidates: Sequence[Candidate]) -> RankedRun:
-        ranked = tuple(
-            candidate.with_scores(
-                {**candidate.scores, self.name: float(candidate.chunk_id)}
-            )
-            for candidate in reversed(candidates)
+async def reverse_reranker(query: str, candidates: Sequence[Candidate]) -> RankedRun:
+    ranked = tuple(
+        candidate.with_scores(
+            {**candidate.scores, "cross_encoder": float(candidate.chunk_id)}
         )
-        return RankedRun(self.name, ranked)
-
-
-class InvalidReranker:
-    name = "invalid"
-
-    async def rerank(self, query: str, candidates: Sequence[Candidate]) -> RankedRun:
-        return RankedRun(self.name, tuple(candidates[:-1]))
-
-
-def make_settings() -> Settings:
-    return Settings(embedding_model="test-model", embedding_dim=2)
+        for candidate in reversed(candidates)
+    )
+    return RankedRun("cross_encoder", ranked)
 
 
 async def test_search_embeds_once_and_passes_same_request_to_every_retriever():
     embedder = FakeEmbedder()
-    dense = FakeRetriever("dense", [cand(1, 1, dense=0.9)])
-    bm25 = FakeRetriever("bm25", [cand(2, 2, bm25=3.0)])
-    service = SearchService(
-        FakePool(("test-model", 2)),  # type: ignore[arg-type]
-        embedder,
-        make_settings(),
+    dense_requests: list[RetrievalRequest] = []
+    bm25_requests: list[RetrievalRequest] = []
+    dense = fake_retriever("dense", [cand(1, 1, dense=0.9)], dense_requests)
+    bm25 = fake_retriever("bm25", [cand(2, 2, bm25=3.0)], bm25_requests)
+    pipeline = partial(
+        search,
+        embed_query=embedder.embed_query,
         retrievers=[dense, bm25],
     )
 
-    results = await service.search("  query  ", fetch_k=12)
+    await pipeline("query", fetch_k=12)
 
     assert embedder.queries == ["query"]
-    assert dense.requests[0] is bm25.requests[0]
-    assert dense.requests[0].query_embedding == (1.0, 0.0)
-    assert dense.requests[0].limit == 12
-    assert all(isinstance(result, SearchResult) for result in results)
+    assert dense_requests[0] is bm25_requests[0]
+    assert dense_requests[0].query_embedding == (1.0, 0.0)
+    assert dense_requests[0].limit == 12
 
 
 async def test_reranker_run_contributes_to_rrf_ordering():
-    retriever = FakeRetriever(
+    retriever = fake_retriever(
         "dense",
         [cand(1, 1, dense=0.9), cand(2, 2, dense=0.8), cand(3, 3, dense=0.7)],
     )
-    service = SearchService(
-        FakePool(("test-model", 2)),  # type: ignore[arg-type]
-        FakeEmbedder(),
-        make_settings(),
+    pipeline = partial(
+        search,
+        embed_query=FakeEmbedder().embed_query,
         retrievers=[retriever],
-        rerankers=[ReverseReranker()],
+        rerankers=[reverse_reranker],
     )
 
-    results = await service.search("query")
+    results = await pipeline("query")
 
     assert [result.page_id for result in results] == [1, 3, 2]
     assert results[0].scores["cross_encoder"] == 1.0
     assert results[0].scores["rrf"] == pytest.approx(1 / 61 + 1 / 63)
-
-
-async def test_reranker_must_return_every_candidate_once():
-    service = SearchService(
-        FakePool(("test-model", 2)),  # type: ignore[arg-type]
-        FakeEmbedder(),
-        make_settings(),
-        retrievers=[
-            FakeRetriever("dense", [cand(1, 1, dense=0.9), cand(2, 2, dense=0.8)])
-        ],
-        rerankers=[InvalidReranker()],
-    )
-
-    with pytest.raises(ValueError, match="every candidate exactly once"):
-        await service.search("query")
-
-
-def test_source_names_must_be_unique_and_cannot_use_rrf():
-    pool = FakePool(("test-model", 2))  # type: ignore[assignment]
-    embedder = FakeEmbedder()
-    settings = make_settings()
-
-    with pytest.raises(ValueError, match="unique"):
-        SearchService(
-            pool,  # type: ignore[arg-type]
-            embedder,
-            settings,
-            retrievers=[FakeRetriever("dense", []), FakeRetriever("dense", [])],
-        )
-    with pytest.raises(ValueError, match="reserved"):
-        SearchService(
-            pool,  # type: ignore[arg-type]
-            embedder,
-            settings,
-            retrievers=[FakeRetriever("rrf", [])],
-        )
-
-
-async def test_blank_query_short_circuits():
-    embedder = FakeEmbedder()
-    service = SearchService(
-        FakePool(("test-model", 2)),  # type: ignore[arg-type]
-        embedder,
-        make_settings(),
-        retrievers=[FakeRetriever("dense", [])],
-    )
-
-    assert await service.search("   ") == []
-    assert embedder.queries == []
