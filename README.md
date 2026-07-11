@@ -82,7 +82,7 @@ Current stages:
 
 1. compile search filters into bound SQL predicates
 2. embed the query once
-3. run retrievers concurrently (dense retrieval is currently the default)
+3. run dense and PostgreSQL full-text retrievers concurrently
 4. build a deduplicated candidate pool and run optional rerankers
 5. fuse retriever and reranker runs with reciprocal rank fusion (RRF)
 6. keep the best chunk per page and render RRF plus native source scores

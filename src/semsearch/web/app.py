@@ -13,6 +13,7 @@ from semsearch.share.db import create_pool
 from semsearch.share.embeddings import EmbeddingError, create_embeddings
 from semsearch.share.logging import configure_logging
 from semsearch.web.db import ping
+from semsearch.web.search.bm25 import retrieve_bm25
 from semsearch.web.search.dense import retrieve_dense
 from semsearch.web.search.pipeline import search
 
@@ -30,7 +31,10 @@ async def lifespan(app: FastAPI):
         app.state.search = partial(
             search,
             embed_query=embedder.embed_query,
-            retrievers=(partial(retrieve_dense, pool=pool),),
+            retrievers=(
+                partial(retrieve_dense, pool=pool),
+                partial(retrieve_bm25, pool=pool),
+            ),
         )
         logger.info(
             "Web application ready with embedding model %s (%d dimensions)",

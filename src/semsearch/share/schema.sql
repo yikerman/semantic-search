@@ -31,8 +31,14 @@ CREATE TABLE IF NOT EXISTS chunks (
     content text NOT NULL,
     char_count int NOT NULL,
     embedding halfvec({embedding_dim}) NOT NULL,
+    search_vector tsvector GENERATED ALWAYS AS (
+        to_tsvector('simple', content)
+    ) STORED,
     UNIQUE (page_id, chunk_index)
 );
 
 CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw_idx
     ON chunks USING hnsw (embedding halfvec_cosine_ops);
+
+CREATE INDEX IF NOT EXISTS chunks_search_vector_gin_idx
+    ON chunks USING gin (search_vector);

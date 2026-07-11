@@ -4,7 +4,7 @@ from psycopg import sql
 
 from semsearch.cli.db import load_schema_sql
 from semsearch.share.config import Settings
-from semsearch.web.db import fetch_dense_candidate_rows
+from semsearch.web.db import fetch_bm25_candidate_rows, fetch_dense_candidate_rows
 from semsearch.web.search.filters import SqlPredicate
 
 
@@ -14,6 +14,14 @@ def test_schema_uses_halfvec_hnsw_cosine_index():
     assert "embedding halfvec(2) NOT NULL" in schema
     assert "USING hnsw (embedding halfvec_cosine_ops)" in schema
     assert "index_meta" not in schema
+
+
+def test_schema_indexes_chunk_content_for_full_text_search():
+    schema = load_schema_sql(Settings(embedding_model="test-model", embedding_dim=2))
+
+    assert "search_vector tsvector GENERATED ALWAYS AS" in schema
+    assert "to_tsvector('simple', content)" in schema
+    assert "USING gin (search_vector)" in schema
 
 
 class EmptyCursor:
@@ -35,3 +43,49 @@ async def test_dense_query_accepts_immutable_embedding_sequence():
     )
 
     assert rows == []
+
+
+class RowCursor:
+    async def fetchall(self):
+        return [
+            (
+                7,
+                3,
+                "https://example.com/post",
+                "Post",
+                "matching content",
+                0.25,
+            )
+        ]
+
+
+class RecordingConnection:
+    def __init__(self) -> None:
+        self.query = None
+        self.params = None
+
+    async def execute(self, query, params):
+        self.query = query
+        self.params = params
+        return RowCursor()
+
+
+async def test_bm25_query_uses_search_vector_and_preserves_filter_params():
+    conn = RecordingConnection()
+
+    rows = await fetch_bm25_candidate_rows(
+        cast(Any, conn),
+        query='postgres "full text"',
+        predicate=SqlPredicate(sql.SQL("p.site_id = %s"), (3,)),
+        limit=12,
+    )
+
+    assert conn.query is not None
+    query = conn.query.as_string()
+    assert "websearch_to_tsquery('simple', %s)" in query
+    assert "c.search_vector @@ search_query.value" in query
+    assert "ts_rank_cd(c.search_vector, search_query.value)" in query
+    assert "p.site_id = %s" in query
+    assert conn.params == ('postgres "full text"', 3, 12)
+    assert rows[0].chunk_id == 7
+    assert rows[0].rank == 0.25
