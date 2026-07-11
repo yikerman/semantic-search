@@ -1,16 +1,17 @@
 import asyncio
 
-from semsearch.ingest.fetch import FetchError, FetchResponse
-from semsearch.ingest.models import IndexOutcome
-from semsearch.models import Site
-from semsearch.sites import (
+from semsearch.cli.ingest.fetch import FetchError, FetchResponse
+from semsearch.cli.ingest.models import IndexOutcome
+from semsearch.cli.models import Site
+from semsearch.cli.sites import (
     PollOutcome,
-    SiteService,
     canonicalize_site_url,
     discover_feed_url,
     extract_feed_urls,
+    poll_all,
+    poll_site,
 )
-from semsearch.url import normalize_origin, normalize_url
+from semsearch.cli.url import normalize_origin, normalize_url
 
 
 class FakeFetcher:
@@ -36,31 +37,7 @@ class FakeUrlIndexer:
         return IndexOutcome(url, "indexed", chunk_count=1)
 
 
-class FakePollingSiteService(SiteService):
-    def __init__(self, feed: FetchResponse) -> None:
-        self.feed = feed
-        self.polled_headers = None
-
-    async def get_site(self, site: str) -> Site:
-        return Site(
-            id=1,
-            base_url="https://example.com",
-            sitemap_url=None,
-            feed_url="https://example.com/feed.xml",
-            last_indexed_at=None,
-            last_polled_at=None,
-            feed_etag=None,
-            feed_last_modified=None,
-        )
-
-    async def _fetch_feed(self, site: Site, *, use_cache: bool) -> FetchResponse | None:
-        return self.feed
-
-    async def _mark_polled(self, site_id: int, headers) -> None:
-        self.polled_headers = headers
-
-
-class FakeConcurrentPollingSiteService(SiteService):
+class FakeConcurrentPoller:
     def __init__(self) -> None:
         self.sites = [
             Site(
@@ -105,8 +82,6 @@ class FakeConcurrentPollingSiteService(SiteService):
     async def poll_site(
         self,
         site: str,
-        index_url,
-        *,
         force: bool = False,
         on_progress=None,
     ) -> PollOutcome:
@@ -216,6 +191,15 @@ def test_extract_feed_urls_from_json_feed():
     ]
 
 
+def test_extract_feed_urls_ignores_invalid_json_feed_shapes():
+    assert extract_feed_urls("[]", "https://example.com/feed.json") == []
+    assert extract_feed_urls('{"items": null}', "https://example.com/feed.json") == []
+    assert extract_feed_urls(
+        '{"items": [null, "bad", {"url": "https://example.com/a"}]}',
+        "https://example.com/feed.json",
+    ) == ["https://example.com/a"]
+
+
 def test_canonicalize_site_url_keeps_configured_origin():
     assert (
         canonicalize_site_url(
@@ -243,15 +227,37 @@ async def test_poll_site_keeps_polling_after_url_failure():
         """,
         {"etag": '"feed-v1"'},
     )
-    service = FakePollingSiteService(feed)
+    record = Site(
+        id=1,
+        base_url="https://example.com",
+        sitemap_url=None,
+        feed_url="https://example.com/feed.xml",
+        last_indexed_at=None,
+        last_polled_at=None,
+        feed_etag=None,
+        feed_last_modified=None,
+    )
     indexer = FakeUrlIndexer("https://example.com/bad")
     progress: list[IndexOutcome] = []
+    polled_headers = []
 
-    outcome = await service.poll_site(
-        "https://example.com",
+    async def get_site(site: str) -> Site:
+        return record
+
+    async def fetch_feed(site: Site, use_cache: bool) -> FetchResponse | None:
+        return feed
+
+    async def mark_polled(site_id: int, headers) -> None:
+        polled_headers.append(headers)
+
+    outcome = await poll_site(
+        get_site,
+        fetch_feed,
+        mark_polled,
         indexer.index_url,
-        force=True,
-        on_progress=progress.append,
+        "https://example.com",
+        True,
+        progress.append,
     )
 
     assert [entry.status for entry in outcome.outcomes] == [
@@ -266,19 +272,20 @@ async def test_poll_site_keeps_polling_after_url_failure():
         ("https://example.com/c", True),
     ]
     assert progress == outcome.outcomes
-    assert service.polled_headers == {"etag": '"feed-v1"'}
+    assert polled_headers == [{"etag": '"feed-v1"'}]
 
 
 async def test_poll_all_polls_sites_concurrently_with_limit():
-    service = FakeConcurrentPollingSiteService()
-    indexer = FakeUrlIndexer("https://never.example")
-    task = asyncio.create_task(service.poll_all(indexer.index_url, concurrency=2))
+    poller = FakeConcurrentPoller()
+    task = asyncio.create_task(
+        poll_all(poller.list_sites, poller.poll_site, False, None, 2)
+    )
 
-    await asyncio.wait_for(service.two_active.wait(), timeout=1)
-    service.release.set()
+    await asyncio.wait_for(poller.two_active.wait(), timeout=1)
+    poller.release.set()
     outcomes = await task
 
-    assert service.max_active == 2
+    assert poller.max_active == 2
     assert [outcome.site.base_url for outcome in outcomes] == [
         "https://a.example",
         "https://b.example",

@@ -1,16 +1,16 @@
 from collections.abc import Sequence
 
-from semsearch.embeddings.base import EmbedQuery
-from semsearch.models import Candidate
-from semsearch.search.base import (
+from semsearch.share.embeddings import EmbedQuery
+from semsearch.share.util import map_concurrently
+from semsearch.web.search.base import (
     Fusion,
     Reranker,
     RetrievalRequest,
     Retriever,
     SearchFilter,
 )
-from semsearch.search.fusion import reciprocal_rank_fusion, union_candidates
-from semsearch.util import map_concurrently
+from semsearch.web.search.fusion import reciprocal_rank_fusion, union_candidates
+from semsearch.web.search.models import Candidate
 
 
 def group_by_page(candidates: Sequence[Candidate], limit: int) -> list[Candidate]:

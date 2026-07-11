@@ -1,17 +1,36 @@
-from semsearch.models import Candidate
+import semsearch.cli.app as cli_module
 from typer.testing import CliRunner
 
-from semsearch.cli import app
 from semsearch.web.app import templates
+from semsearch.web.search.models import Candidate
 
 
 def test_cli_is_admin_only():
-    result = CliRunner().invoke(app, ["--help"])
+    result = CliRunner().invoke(cli_module.app, ["--help"])
 
     assert result.exit_code == 0
     assert " Search from the terminal" not in result.stdout
     assert "init-db" in result.stdout
     assert "site" in result.stdout
+
+
+def test_site_poll_validates_selector_before_opening_services(monkeypatch):
+    def fail_if_opened():
+        raise AssertionError("services opened")
+
+    monkeypatch.setattr(cli_module, "open_services", fail_if_opened)
+    runner = CliRunner()
+
+    missing = runner.invoke(cli_module.app, ["site", "poll"])
+    conflicting = runner.invoke(
+        cli_module.app,
+        ["site", "poll", "--site", "https://example.com", "--all"],
+    )
+
+    assert missing.exit_code == 1
+    assert "Pass a site origin or --all" in missing.output
+    assert conflicting.exit_code == 1
+    assert "Use either a site origin or --all" in conflicting.output
 
 
 def test_web_template_shows_rrf_and_native_scores_without_styling():

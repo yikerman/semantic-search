@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-semsearch = "semsearch.cli:main"
+semsearch = "semsearch.cli.app:main"
 
 [build-system]
 requires = ["uv_build>=0.11,<1"]

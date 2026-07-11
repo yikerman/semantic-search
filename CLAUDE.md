@@ -5,18 +5,35 @@ no link graph, no global popularity, no SEO-derived signals.
 
 ## Shape
 
-Two entrypoints share one service layer:
+Code is organized by ownership under three packages:
 
-- `semsearch.cli`: Typer admin commands
-- `semsearch.web.app`: FastAPI search page
-- `db.py`: async psycopg3, raw SQL, schema init, pool lifecycle
-- `sites.py`: site config and admin lifecycle
-- `ingest/`: fetch, extract, chunk, embed, store
-- `search/`: retrievers, rankers, page grouping
+- `semsearch.share`: settings, database pool setup, embeddings, schema, and
+  utilities used by both surfaces
+- `semsearch.cli`: Typer commands, CLI database operations, site lifecycle,
+  crawling, and ingestion
+- `semsearch.web`: FastAPI app, web database reads, search pipeline, and
+  templates
+
+Both surfaces may import `semsearch.share`. Shared code must not import either
+surface, and `semsearch.cli` and `semsearch.web` must not import each other.
+Put code in `share` only when both surfaces actually use it.
+
+## Code standards
+
+- Work functional-first. Prefer module-level functions, callable type aliases,
+  `partial`, and explicit arguments over service objects and protocols. Use a
+  class when it owns real mutable state or a resource lifecycle.
+- Validate at external input boundaries: settings, web queries, crawler/network
+  responses, embedding API responses, and database rows. Internal typed code
+  should trust its callers and should not repeat checks for valid function
+  arguments.
+- Keep package initializers minimal. Import concrete modules directly instead of
+  building broad re-export surfaces.
+- Keep tests hermetic and use fakes for external systems.
 
 ## Search
 
-`search()` compiles filters, embeds the query, runs retrievers,
+`semsearch.web.search.pipeline.search()` compiles filters, embeds the query,
 builds a candidate union, runs optional rerankers, applies RRF, then returns the
 best chunk per page.
 
@@ -32,7 +49,7 @@ reranker runs are inputs to the final RRF fusion.
 
 ## Ingest
 
-The pipeline is:
+The `semsearch.cli.ingest` pipeline is:
 
 1. fetch HTML with `curl-cffi`
 2. extract main text with `trafilatura`
@@ -70,7 +87,6 @@ podman compose up -d db
 cp .env.example .env
 uv run semsearch init-db
 uv run semsearch site add https://some.blog/ --sitemap auto --feed auto --index
-uv run semsearch search "query"
 uv run uvicorn semsearch.web.app:app --reload
 uv run pytest
 uv run ruff check

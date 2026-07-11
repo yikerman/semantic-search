@@ -1,4 +1,4 @@
-from semsearch.ingest.sitemap import (
+from semsearch.cli.ingest.sitemap import (
     collect_page_urls,
     discover_sitemaps,
     filter_urls,
@@ -98,7 +98,7 @@ class FakeFetcher:
         try:
             return self.responses[url]
         except KeyError as exc:
-            from semsearch.ingest.fetch import FetchError
+            from semsearch.cli.ingest.fetch import FetchError
 
             raise FetchError(url) from exc
 

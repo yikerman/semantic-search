@@ -1,6 +1,6 @@
 from collections.abc import Awaitable, Callable, Iterable
 
-from semsearch.ingest.models import IndexOutcome
+from semsearch.cli.ingest.models import IndexOutcome
 
 IndexOne = Callable[[str], Awaitable[IndexOutcome]]
 

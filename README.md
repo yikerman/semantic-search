@@ -14,6 +14,17 @@ that indie sites can compete.
 - OpenAI-compatible embeddings API
 - Server-rendered HTML
 
+## Code structure
+
+Source code is organized by owning surface:
+
+```text
+src/semsearch/
+|-- share/  # configuration, database pool, embeddings, shared utilities
+|-- cli/    # Typer commands, site administration, crawling, and ingestion
+`-- web/    # FastAPI application, search pipeline, and templates
+```
+
 ## Setup
 
 ```sh
@@ -75,14 +86,6 @@ Current stages:
 4. build a deduplicated candidate pool and run optional rerankers
 5. fuse retriever and reranker runs with reciprocal rank fusion (RRF)
 6. keep the best chunk per page and render RRF plus native source scores
-
-TODO:
-
-- add concrete date and site filters using `pages.published_at` and site ids
-- add a PostgreSQL full-text/BM25 retriever
-- add a cross-encoder reranker that contributes a ranked run to RRF
-- evaluate weighted fusion and tune the RRF constant against a relevance set
-- add filter controls to the web form after concrete filters exist
 
 ## Configuration
 

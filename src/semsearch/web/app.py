@@ -1,4 +1,4 @@
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
 
@@ -6,12 +6,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from semsearch.config import get_settings
-from semsearch.db import create_pool, ping
-from semsearch.embeddings import get_embedding_provider
-from semsearch.embeddings.openai_compat import EmbeddingError
-from semsearch.search.dense import retrieve_dense
-from semsearch.search.pipeline import search
+from semsearch.share.config import get_settings
+from semsearch.share.db import create_pool
+from semsearch.share.embeddings import EmbeddingError, create_embeddings
+from semsearch.web.db import ping
+from semsearch.web.search.dense import retrieve_dense
+from semsearch.web.search.pipeline import search
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
@@ -19,10 +19,7 @@ templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    async with AsyncExitStack() as stack:
-        embedder = await stack.enter_async_context(get_embedding_provider(settings))
-        pool = create_pool(settings)
-        await stack.enter_async_context(pool)
+    async with create_embeddings(settings) as embedder, create_pool(settings) as pool:
         app.state.pool = pool
         app.state.search = partial(
             search,

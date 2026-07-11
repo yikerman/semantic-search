@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from urllib.parse import urljoin, urlsplit
 from xml.etree import ElementTree
 
-from semsearch.ingest.fetch import FetchError
+from semsearch.cli.ingest.fetch import FetchError
 
 logger = logging.getLogger(__name__)
 

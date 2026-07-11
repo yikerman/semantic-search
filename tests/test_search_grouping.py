@@ -1,12 +1,13 @@
 from collections.abc import Sequence
 from functools import partial
+from typing import cast
 
 import pytest
 
-from semsearch.models import Candidate
-from semsearch.search.base import RankedRun, RetrievalRequest, Retriever
-from semsearch.search.fusion import reciprocal_rank_fusion, union_candidates
-from semsearch.search.pipeline import group_by_page, search
+from semsearch.web.search.base import RankedRun, RetrievalRequest, Retriever
+from semsearch.web.search.fusion import reciprocal_rank_fusion, union_candidates
+from semsearch.web.search.models import Candidate
+from semsearch.web.search.pipeline import group_by_page, search
 
 
 def cand(chunk_id: int, page_id: int, **scores: float) -> Candidate:
@@ -34,7 +35,7 @@ def test_union_candidates_combines_scores_without_mutating_inputs():
     assert dense.scores == {"dense": 0.9}
     assert lexical.scores == {"bm25": 4.2}
     with pytest.raises(TypeError):
-        merged[0].scores["other"] = 1.0  # type: ignore[index]
+        cast(dict[str, float], merged[0].scores)["other"] = 1.0
 
 
 def test_rrf_uses_ranked_runs_and_preserves_native_scores():

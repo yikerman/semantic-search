@@ -3,7 +3,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from semsearch.config import Settings
+from semsearch.share.config import Settings
 
 
 @pytest.mark.parametrize(

@@ -7,7 +7,7 @@ from typing import Any, cast
 from curl_cffi.requests import AsyncSession
 from curl_cffi.requests.exceptions import RequestException
 
-from semsearch.config import Settings
+from semsearch.share.config import Settings
 
 
 class FetchError(RuntimeError):
@@ -34,6 +34,7 @@ class Fetcher:
     ) -> None:
         self._delay = delay_seconds
         self._last_request = 0.0
+        self._request_lock = asyncio.Lock()
         if impersonate:
             self._session = AsyncSession(
                 impersonate=cast(Any, impersonate),
@@ -60,15 +61,15 @@ class Fetcher:
         headers: Mapping[str, str] | None = None,
         allow_not_modified: bool = False,
     ) -> FetchResponse | None:
-        wait = self._delay - (time.monotonic() - self._last_request)
-        if wait > 0:
-            await asyncio.sleep(wait)
+        async with self._request_lock:
+            wait = self._delay - (time.monotonic() - self._last_request)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last_request = time.monotonic()
         try:
             resp = await self._session.get(url, headers=headers)
         except RequestException as exc:
             raise FetchError(f"GET {url} failed: {exc}") from exc
-        finally:
-            self._last_request = time.monotonic()
         if resp.status_code == 304 and allow_not_modified:
             return None
         if resp.status_code != 200:

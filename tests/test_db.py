@@ -1,8 +1,11 @@
+from typing import Any, cast
+
 from psycopg import sql
 
-from semsearch.config import Settings
-from semsearch.db import fetch_dense_candidate_rows, load_schema_sql
-from semsearch.search.filters import SqlPredicate
+from semsearch.cli.db import load_schema_sql
+from semsearch.share.config import Settings
+from semsearch.web.db import fetch_dense_candidate_rows
+from semsearch.web.search.filters import SqlPredicate
 
 
 def test_schema_uses_halfvec_hnsw_cosine_index():
@@ -25,7 +28,7 @@ class DenseConnection:
 
 async def test_dense_query_accepts_immutable_embedding_sequence():
     rows = await fetch_dense_candidate_rows(
-        DenseConnection(),  # type: ignore[arg-type]
+        cast(Any, DenseConnection()),
         query_embedding=(1.0, 0.0),
         predicate=SqlPredicate(sql.SQL("TRUE")),
         limit=10,

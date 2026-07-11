@@ -1,4 +1,4 @@
-from semsearch.ingest.chunk import char_chunks
+from semsearch.cli.ingest.chunk import char_chunks
 
 
 def words(n: int) -> str:

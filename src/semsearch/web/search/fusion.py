@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 
-from semsearch.models import Candidate
-from semsearch.search.base import RankedRun
+from semsearch.web.search.base import RankedRun
+from semsearch.web.search.models import Candidate
 
 
 def union_candidates(runs: Sequence[RankedRun]) -> list[Candidate]:

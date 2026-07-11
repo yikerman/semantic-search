@@ -2,7 +2,7 @@ from functools import partial
 
 from psycopg import sql
 
-from semsearch.search.filters import SqlPredicate, compile_filters
+from semsearch.web.search.filters import SqlPredicate, compile_filters
 
 
 def column_equals(page_alias: str, *, column: str, value: object) -> SqlPredicate:

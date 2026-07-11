@@ -1,6 +1,6 @@
 import asyncio
 
-from semsearch.util import map_concurrently
+from semsearch.share.util import map_concurrently
 
 
 async def test_map_concurrently_limits_work_and_preserves_order():

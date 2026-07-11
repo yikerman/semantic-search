@@ -1,5 +1,5 @@
-from semsearch.ingest.models import IndexOutcome
-from semsearch.ingest.outcomes import collect_index_outcomes, index_url_outcome
+from semsearch.cli.ingest.models import IndexOutcome
+from semsearch.cli.ingest.outcomes import collect_index_outcomes, index_url_outcome
 
 
 async def test_index_url_outcome_converts_page_error_to_error_outcome():

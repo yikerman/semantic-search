@@ -5,14 +5,10 @@ from datetime import datetime
 from typing import LiteralString, cast
 
 import psycopg
-from psycopg import sql
 from pgvector import HalfVector
-from pgvector.psycopg import register_vector_async
-from psycopg_pool import AsyncConnectionPool
 
-from semsearch.config import Settings
-from semsearch.models import Site
-from semsearch.search.filters import SqlPredicate
+from semsearch.cli.models import Site
+from semsearch.share.config import Settings
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,16 +17,6 @@ class ChunkInsert:
     content: str
     char_count: int
     embedding: Sequence[float]
-
-
-@dataclass(frozen=True, slots=True)
-class DenseCandidateRecord:
-    chunk_id: int
-    page_id: int
-    url: str
-    title: str | None
-    content: str
-    similarity: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,33 +33,16 @@ last_polled_at, feed_etag, feed_last_modified
 
 
 def load_schema_sql(settings: Settings) -> LiteralString:
-    raw = importlib.resources.files("semsearch").joinpath("schema.sql").read_text()
-    return cast(LiteralString, raw.format(embedding_dim=settings.embedding_dim))
-
-
-async def _configure(conn: psycopg.AsyncConnection) -> None:
-    await register_vector_async(conn)
-    await conn.commit()
-
-
-def create_pool(settings: Settings) -> AsyncConnectionPool:
-    return AsyncConnectionPool(
-        settings.database_url,
-        min_size=1,
-        max_size=10,
-        open=False,
-        configure=_configure,
+    raw = (
+        importlib.resources.files("semsearch.share").joinpath("schema.sql").read_text()
     )
+    return cast(LiteralString, raw.format(embedding_dim=settings.embedding_dim))
 
 
 async def init_schema(settings: Settings) -> None:
     async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
         await conn.execute(load_schema_sql(settings))
         await conn.commit()
-
-
-async def ping(conn: psycopg.AsyncConnection) -> None:
-    await conn.execute("SELECT 1")
 
 
 async def fetch_index_stats(conn: psycopg.AsyncConnection) -> IndexStats:
@@ -230,28 +199,3 @@ async def replace_page_chunks(
                 for chunk in chunks
             ],
         )
-
-
-async def fetch_dense_candidate_rows(
-    conn: psycopg.AsyncConnection,
-    *,
-    query_embedding: Sequence[float],
-    predicate: SqlPredicate,
-    limit: int,
-) -> list[DenseCandidateRecord]:
-    embedding = HalfVector(list(query_embedding))
-    cur = await conn.execute(
-        sql.SQL(
-            """
-        SELECT c.id, c.page_id, p.url, p.title, c.content,
-               1 - (c.embedding <=> %s) AS similarity
-        FROM chunks c
-        JOIN pages p ON p.id = c.page_id
-        WHERE {predicate}
-        ORDER BY c.embedding <=> %s
-        LIMIT %s
-        """
-        ).format(predicate=predicate.clause),
-        (embedding, *predicate.params, embedding, limit),
-    )
-    return [DenseCandidateRecord(*row) for row in await cur.fetchall()]

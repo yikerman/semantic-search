@@ -1,8 +1,8 @@
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
-from semsearch.models import Candidate
-from semsearch.search.filters import SearchFilter
+from semsearch.web.search.filters import SearchFilter
+from semsearch.web.search.models import Candidate
 
 
 @dataclass(frozen=True, slots=True)

@@ -2,25 +2,41 @@ import asyncio
 import logging
 from collections import Counter
 from collections.abc import AsyncIterator, Coroutine
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import partial
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
 import psycopg
 import psycopg_pool
 import typer
 
-from semsearch import db
-from semsearch.config import Settings, get_settings
-from semsearch.embeddings import get_embedding_provider
-from semsearch.embeddings.openai_compat import EmbeddingError
-from semsearch.ingest.chunk import char_chunks
-from semsearch.ingest.fetch import FetchError, create_fetcher
-from semsearch.ingest.models import IndexOutcome
-from semsearch.ingest.service import IngestError, IngestService
-from semsearch.models import Site
-from semsearch.sites import PollOutcome, SiteError, SiteService
+from semsearch.cli import db
+from semsearch.cli.ingest.chunk import char_chunks
+from semsearch.cli.ingest.fetch import FetchError, create_fetcher
+from semsearch.cli.ingest.models import IndexOutcome
+from semsearch.cli.ingest.pipeline import IngestError, index_sitemap, index_url
+from semsearch.cli.models import Site
+from semsearch.cli.sites import (
+    AddSite,
+    IndexSite,
+    ListSites,
+    PollAll,
+    PollOutcome,
+    PollSite,
+    SiteError,
+    add_site,
+    fetch_feed,
+    get_site,
+    index_site,
+    list_sites,
+    mark_polled,
+    poll_all,
+    poll_site,
+)
+from semsearch.share.config import Settings, get_settings
+from semsearch.share.db import create_pool
+from semsearch.share.embeddings import EmbeddingError, create_embeddings
 
 app = typer.Typer(help="semsearch: indie blog search engine admin tool")
 site_app = typer.Typer(help="Manage configured sites")
@@ -34,31 +50,48 @@ ForceOption = Annotated[
 @dataclass(slots=True)
 class Services:
     settings: Settings
-    sites: SiteService
-    ingest: IngestService
+    add_site: AddSite
+    list_sites: ListSites
+    index_site: IndexSite
+    poll_site: PollSite
+    poll_all: PollAll
 
 
 @asynccontextmanager
 async def open_services() -> AsyncIterator[Services]:
     settings = get_settings()
-    async with AsyncExitStack() as stack:
-        embedder = await stack.enter_async_context(get_embedding_provider(settings))
-        pool = db.create_pool(settings)
-        await stack.enter_async_context(pool)
-        fetcher = await stack.enter_async_context(create_fetcher(settings))
+    async with (
+        create_embeddings(settings) as embedder,
+        create_pool(settings) as pool,
+        create_fetcher(settings) as fetcher,
+    ):
+        index_url_fn = partial(
+            index_url,
+            pool,
+            embedder.embed_documents,
+            fetcher.fetch_text,
+            partial(
+                char_chunks,
+                chunk_chars=settings.chunk_chars,
+                chunk_overlap=settings.chunk_overlap,
+            ),
+        )
+        index_sitemap_fn = partial(index_sitemap, fetcher.fetch_text, index_url_fn)
+        list_sites_fn = partial(list_sites, pool)
+        poll_site_fn = partial(
+            poll_site,
+            partial(get_site, pool),
+            partial(fetch_feed, fetcher),
+            partial(mark_polled, pool),
+            index_url_fn,
+        )
         yield Services(
             settings,
-            SiteService(pool, fetcher),
-            IngestService(
-                pool,
-                embedder.embed_documents,
-                fetcher,
-                partial(
-                    char_chunks,
-                    chunk_chars=settings.chunk_chars,
-                    chunk_overlap=settings.chunk_overlap,
-                ),
-            ),
+            partial(add_site, pool, fetcher.fetch_text),
+            list_sites_fn,
+            partial(index_site, pool, index_sitemap_fn),
+            poll_site_fn,
+            partial(poll_all, list_sites_fn, poll_site_fn),
         )
 
 
@@ -113,16 +146,13 @@ def site_add(
 
     async def _add() -> tuple[Site, list[IndexOutcome] | None]:
         async with open_services() as services:
-            site = await services.sites.add_site(
-                url, sitemap_url=sitemap, feed_url=feed
-            )
+            site = await services.add_site(url, sitemap, feed)
             if not index:
                 return site, None
-            outcomes = await services.sites.index_site(
+            outcomes = await services.index_site(
                 site.base_url,
-                services.ingest.index_sitemap,
-                force=force,
-                on_progress=_echo_outcome,
+                force,
+                _echo_outcome,
             )
             return site, outcomes
 
@@ -138,7 +168,7 @@ def site_list() -> None:
 
     async def _list() -> list[Site]:
         async with open_services() as services:
-            return await services.sites.list_sites()
+            return await services.list_sites()
 
     sites = run(_list())
     if not sites:
@@ -154,11 +184,10 @@ def site_index(site: str, force: ForceOption = False) -> None:
 
     async def _index() -> list[IndexOutcome]:
         async with open_services() as services:
-            return await services.sites.index_site(
+            return await services.index_site(
                 site,
-                services.ingest.index_sitemap,
-                force=force,
-                on_progress=_echo_outcome,
+                force,
+                _echo_outcome,
             )
 
     outcomes = run(_index())
@@ -182,28 +211,22 @@ def site_poll(
     """Poll RSS/Atom feeds."""
 
     async def _poll() -> list[PollOutcome]:
-        if site is not None and all_sites:
-            raise SiteError("Use either a site origin or --all")
-        if site is None and not all_sites:
-            raise SiteError("Pass a site origin or --all")
+        if all_sites:
+            if site is not None:
+                raise SiteError("Use either a site origin or --all")
+            selected_site = None
+        else:
+            if site is None:
+                raise SiteError("Pass a site origin or --all")
+            selected_site = site
         async with open_services() as services:
-            if all_sites:
-                return await services.sites.poll_all(
-                    services.ingest.index_url,
-                    force=force,
-                    on_progress=_echo_outcome,
-                    concurrency=(
-                        concurrency or services.settings.site_poll_concurrency
-                    ),
+            if selected_site is None:
+                return await services.poll_all(
+                    force,
+                    _echo_outcome,
+                    concurrency or services.settings.site_poll_concurrency,
                 )
-            return [
-                await services.sites.poll_site(
-                    cast(str, site),
-                    services.ingest.index_url,
-                    force=force,
-                    on_progress=_echo_outcome,
-                )
-            ]
+            return [await services.poll_site(selected_site, force, _echo_outcome)]
 
     polls = run(_poll())
     for poll in polls:

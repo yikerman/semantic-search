@@ -1,7 +1,7 @@
 import re
 from collections.abc import Callable
 
-from semsearch.models import Chunk
+from semsearch.cli.ingest.models import Chunk
 
 _WORD = re.compile(r"\S+\s*")
 
