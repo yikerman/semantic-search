@@ -3,7 +3,7 @@ import time
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 from curl_cffi.requests import AsyncSession
 from curl_cffi.requests.exceptions import RequestException
@@ -83,12 +83,14 @@ class Fetcher:
         except ValueError as exc:
             raise FetchError(str(exc), permanent=True) from exc
         origin = normalize_origin(url)
-        async with self._origin_locks[origin], self._semaphore:
-            await self._wait_for_start(origin)
-            try:
-                resp = await self._session.get(url, headers=headers)
-            except RequestException as exc:
-                raise FetchError(f"GET {url} failed: {exc}") from exc
+        async with self._origin_locks[origin]:
+            await self._wait_for_turn(origin)
+            async with self._semaphore:
+                self._last_origin_start[origin] = time.monotonic()
+                try:
+                    resp = await self._session.get(url, headers=headers)
+                except RequestException as exc:
+                    raise FetchError(f"GET {url} failed: {exc}") from exc
 
         status = resp.status_code
         if status == 304 and allow_not_modified:
@@ -124,15 +126,16 @@ class Fetcher:
             final_url,
         )
 
-    async def _wait_for_start(self, origin: str) -> None:
+    async def _wait_for_turn(self, origin: str) -> None:
         # Politeness is per-origin: the origin lock serializes same-host requests
         # and this delay spaces their starts. Distinct origins are bounded only by
-        # the concurrency semaphore, so the crawl fans out across many small sites.
+        # the concurrency semaphore, so the crawl fans out across many small
+        # sites. The wait runs before the semaphore is taken (and the start is
+        # recorded after), so a sleeping request never occupies a slot.
         now = time.monotonic()
         origin_wait = self._delay - (now - self._last_origin_start.get(origin, 0.0))
         if origin_wait > 0:
             await asyncio.sleep(origin_wait)
-        self._last_origin_start[origin] = time.monotonic()
 
     async def aclose(self) -> None:
         await self._session.close()

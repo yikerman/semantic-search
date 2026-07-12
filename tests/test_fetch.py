@@ -111,3 +111,22 @@ async def test_same_origin_requests_observe_origin_delay(monkeypatch):
     )
 
     assert starts == [100.0, 101.0]
+
+
+async def test_politeness_wait_does_not_hold_a_concurrency_slot(monkeypatch):
+    fetcher = fake_fetcher(FakeSession(), delay=1.0)
+    fetcher._semaphore = asyncio.Semaphore(1)
+    await fetcher.fetch_response("https://a.example/one")
+
+    slot_held_during_sleep: list[bool] = []
+    real_sleep = asyncio.sleep
+
+    async def sleep(delay: float) -> None:
+        slot_held_during_sleep.append(fetcher._semaphore.locked())
+        await real_sleep(0)
+
+    monkeypatch.setattr("semsearch.cli.ingest.fetch.asyncio.sleep", sleep)
+
+    await fetcher.fetch_response("https://a.example/two")
+
+    assert slot_held_during_sleep == [False]

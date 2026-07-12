@@ -119,6 +119,7 @@ async def poll_site(
                 site_id=record.id,
                 lease_token=lease_token,
                 error=str(exc),
+                interval_seconds=settings.site_poll_interval_seconds,
             )
         raise
 

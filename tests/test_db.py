@@ -4,7 +4,11 @@ from psycopg import sql
 
 from semsearch.cli.db import load_schema_sql
 from semsearch.share.config import Settings
-from semsearch.web.db import fetch_bm25_candidate_rows, fetch_dense_candidate_rows
+from semsearch.web.db import (
+    fetch_bm25_candidate_rows,
+    fetch_dense_candidate_rows,
+    fetch_lead_chunks,
+)
 from semsearch.web.search.filters import SqlPredicate
 
 
@@ -106,3 +110,30 @@ async def test_bm25_query_uses_search_vector_and_preserves_filter_params():
     assert conn.params == ('postgres "full text"', 3, 12)
     assert rows[0].chunk_id == 7
     assert rows[0].rank == 0.25
+
+
+class LeadCursor:
+    async def fetchall(self):
+        return [(3, "lead three"), (5, "lead five")]
+
+
+class LeadConnection:
+    def __init__(self) -> None:
+        self.query = None
+        self.params = None
+
+    async def execute(self, query, params):
+        self.query = query
+        self.params = params
+        return LeadCursor()
+
+
+async def test_lead_chunk_lookup_maps_page_ids_to_first_chunk():
+    conn = LeadConnection()
+
+    lead = await fetch_lead_chunks(cast(Any, conn), page_ids=(3, 5))
+
+    assert conn.query is not None
+    assert "chunk_index = 0" in conn.query
+    assert conn.params == ([3, 5],)
+    assert lead == {3: "lead three", 5: "lead five"}

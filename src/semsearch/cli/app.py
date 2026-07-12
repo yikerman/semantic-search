@@ -40,6 +40,7 @@ from semsearch.share.embeddings import (
     create_embeddings,
 )
 from semsearch.share.logging import configure_logging
+from semsearch.share.status import fetch_index_stats, list_failed_jobs
 
 app = typer.Typer(help="semsearch: indie blog search engine admin tool")
 site_app = typer.Typer(help="Manage configured sites")
@@ -216,8 +217,8 @@ def status() -> None:
         settings = get_settings()
         async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
             try:
-                stats = await db.fetch_index_stats(conn)
-                failures = await db.list_failed_jobs(conn)
+                stats = await fetch_index_stats(conn)
+                failures = await list_failed_jobs(conn)
             except psycopg.errors.UndefinedTable:
                 typer.echo("Database not initialized. Run: semsearch init-db")
                 raise typer.Exit(1) from None

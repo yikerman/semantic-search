@@ -22,11 +22,13 @@ def configure_logging(level: LogLevel) -> None:
                 }
             },
             "loggers": {
-                "semsearch": {
-                    "handlers": ["stderr"],
-                    "level": level,
-                    "propagate": False,
-                }
+                "semsearch": {"level": level},
+                # uvicorn installs its own handlers with a different format;
+                # strip them so its records render through the root handler
+                # like everything else.
+                "uvicorn": {"level": "INFO", "propagate": True},
+                "uvicorn.access": {"level": "INFO", "propagate": True},
             },
+            "root": {"handlers": ["stderr"], "level": "WARNING"},
         }
     )

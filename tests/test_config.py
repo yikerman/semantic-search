@@ -17,6 +17,7 @@ from semsearch.share.config import Settings
         ("fetch_timeout_seconds", 0),
         ("fetch_concurrency", 0),
         ("database_pool_max_size", 0),
+        ("database_pool_max_size", 1),
         ("site_poll_interval_seconds", 0),
         ("site_poll_concurrency", 0),
         ("ingest_concurrency", 0),

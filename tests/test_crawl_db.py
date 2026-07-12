@@ -36,6 +36,16 @@ async def test_claim_crawl_job_returns_ownership_token():
     assert "lease_token = %s" in conn.query
 
 
+async def test_claim_crawl_job_can_exclude_sites():
+    conn = ClaimConnection()
+
+    job = await db.claim_crawl_job(cast(Any, conn), exclude_site_ids=(4, 9))
+
+    assert job is not None
+    assert "site_id != ALL(%s::bigint[])" in conn.query
+    assert conn.params[2] == [4, 9]
+
+
 class RecordingConnection:
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[object, ...]]] = []

@@ -64,7 +64,8 @@ Configured sites use normalized origins as human-readable ids and surrogate
 `sites.id` values for foreign keys. Sitemap is optional; feed-only sites are
 indexed by `site poll`. The continuous `worker` scatters polling, discovers
 current and historical URLs into a durable queue, and ingests queued pages with
-bounded concurrency and retry backoff.
+bounded concurrency and retry backoff; concurrent ingest loops prefer sites no
+other loop is working so fetches spread across origins.
 
 ## Constraints
 

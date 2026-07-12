@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql://semsearch:semsearch@localhost:5432/semsearch"
-    database_pool_max_size: Annotated[int, Field(gt=0)] = 20
+    database_pool_max_size: Annotated[int, Field(ge=2)] = 20
     log_level: LogLevel = "INFO"
 
     embedding_api_base: str = "https://openrouter.ai/api/v1"

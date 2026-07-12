@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 import psycopg
 from pgvector import HalfVector
 
-from semsearch.cli.models import CrawlJob, FailedCrawlJob, Site
+from semsearch.cli.models import CrawlJob, Site
 from semsearch.share.config import Settings
 
 
@@ -18,16 +18,6 @@ class ChunkInsert:
     content: str
     char_count: int
     embedding: Sequence[float]
-
-
-@dataclass(frozen=True, slots=True)
-class IndexStats:
-    site_count: int
-    page_count: int
-    chunk_count: int
-    queued_count: int
-    retrying_count: int
-    failed_count: int
 
 
 SITE_COLUMNS = """
@@ -49,21 +39,6 @@ async def init_schema(settings: Settings) -> None:
     async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
         await conn.execute(load_schema_sql(settings))
         await conn.commit()
-
-
-async def fetch_index_stats(conn: psycopg.AsyncConnection) -> IndexStats:
-    cur = await conn.execute(
-        """
-        SELECT (SELECT count(*) FROM sites),
-               (SELECT count(*) FROM pages),
-               (SELECT count(*) FROM chunks),
-               (SELECT count(*) FROM crawl_jobs WHERE failed_at IS NULL),
-               (SELECT count(*) FROM crawl_jobs
-                WHERE failed_at IS NULL AND attempt_count > 0),
-               (SELECT count(*) FROM crawl_jobs WHERE failed_at IS NOT NULL)
-        """
-    )
-    return IndexStats(*cast(tuple, await cur.fetchone()))
 
 
 async def upsert_site_config(
@@ -234,21 +209,28 @@ async def mark_poll_succeeded(
 
 
 async def mark_poll_failed(
-    conn: psycopg.AsyncConnection, *, site_id: int, lease_token: UUID, error: str
+    conn: psycopg.AsyncConnection,
+    *,
+    site_id: int,
+    lease_token: UUID,
+    error: str,
+    interval_seconds: int,
 ) -> None:
+    # Backoff caps at the healthy poll interval so a failing feed is never
+    # polled more often than a working one.
     await conn.execute(
         """
         UPDATE sites
         SET poll_failures = poll_failures + 1,
             next_poll_at = now() + make_interval(
-                secs => LEAST(3600, 300 * (2 ^ LEAST(poll_failures, 4)))
+                secs => LEAST(%s, 300 * (2 ^ LEAST(poll_failures, 10)))
             ),
             poll_lease_until = NULL,
             poll_lease_token = NULL,
             sync_error = %s
         WHERE id = %s AND poll_lease_token = %s
         """,
-        (error, site_id, lease_token),
+        (interval_seconds, error, site_id, lease_token),
     )
 
 
@@ -344,6 +326,7 @@ async def claim_crawl_job(
     conn: psycopg.AsyncConnection,
     *,
     site_id: int | None = None,
+    exclude_site_ids: Sequence[int] = (),
     lease_seconds: int = 600,
 ) -> CrawlJob | None:
     token = uuid4()
@@ -356,6 +339,7 @@ async def claim_crawl_job(
               AND next_attempt_at <= now()
               AND (lease_until IS NULL OR lease_until < now())
               AND (%s::bigint IS NULL OR site_id = %s::bigint)
+              AND site_id != ALL(%s::bigint[])
             ORDER BY next_attempt_at, id
             FOR UPDATE SKIP LOCKED
             LIMIT 1
@@ -369,7 +353,7 @@ async def claim_crawl_job(
                   crawl_jobs.source, crawl_jobs.attempt_count,
                   crawl_jobs.lease_token
         """,
-        (site_id, site_id, lease_seconds, token),
+        (site_id, site_id, list(exclude_site_ids), lease_seconds, token),
     )
     row = await cur.fetchone()
     return None if row is None else CrawlJob(*row)
@@ -435,22 +419,6 @@ async def renew_crawl_lease(
         (lease_seconds, job_id, lease_token),
     )
     return cur.rowcount == 1
-
-
-async def list_failed_jobs(
-    conn: psycopg.AsyncConnection, *, limit: int = 10
-) -> list[FailedCrawlJob]:
-    cur = await conn.execute(
-        """
-        SELECT url, attempt_count, last_error
-        FROM crawl_jobs
-        WHERE failed_at IS NOT NULL
-        ORDER BY failed_at DESC
-        LIMIT %s
-        """,
-        (limit,),
-    )
-    return [FailedCrawlJob(row[0], row[1], row[2]) for row in await cur.fetchall()]
 
 
 async def page_exists(conn: psycopg.AsyncConnection, *, url: str) -> bool:

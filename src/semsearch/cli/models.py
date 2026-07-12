@@ -27,10 +27,3 @@ class CrawlJob:
     source: str
     attempt_count: int
     lease_token: UUID
-
-
-@dataclass(frozen=True, slots=True)
-class FailedCrawlJob:
-    url: str
-    attempt_count: int
-    last_error: str

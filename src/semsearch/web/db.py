@@ -32,6 +32,19 @@ async def ping(conn: psycopg.AsyncConnection) -> None:
     await conn.execute("SELECT 1")
 
 
+async def fetch_lead_chunks(
+    conn: psycopg.AsyncConnection, *, page_ids: Sequence[int]
+) -> dict[int, str]:
+    cur = await conn.execute(
+        """
+        SELECT page_id, content FROM chunks
+        WHERE page_id = ANY(%s) AND chunk_index = 0
+        """,
+        (list(page_ids),),
+    )
+    return {page_id: content for page_id, content in await cur.fetchall()}
+
+
 async def fetch_dense_candidate_rows(
     conn: psycopg.AsyncConnection,
     *,

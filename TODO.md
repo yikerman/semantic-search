@@ -10,3 +10,7 @@
 ## Gaps
 
 - No re-embedding pipeline.
+- Chunk embeddings lack context hints: prepend the page URL and title to each
+  chunk's embedding input (today it is title + chunk text). Requires
+  re-embedding and updating every chunk, so defer until a re-embedding
+  pipeline exists.

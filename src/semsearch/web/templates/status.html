@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>semsearch status</title>
+</head>
+<body>
+  <h1>Status</h1>
+  <table>
+    <tr><th>sites</th><td>{{ stats.site_count }}</td></tr>
+    <tr><th>pages</th><td>{{ stats.page_count }}</td></tr>
+    <tr><th>chunks</th><td>{{ stats.chunk_count }}</td></tr>
+    <tr><th>queued</th><td>{{ stats.queued_count }}</td></tr>
+    <tr><th>retrying</th><td>{{ stats.retrying_count }}</td></tr>
+    <tr><th>failed</th><td>{{ stats.failed_count }}</td></tr>
+  </table>
+
+  {% if failures %}
+  <h2>Recent failures</h2>
+  <ul>
+    {% for failure in failures %}
+    <li>{{ failure.url }} ({{ failure.attempt_count }} attempts): {{ failure.last_error }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <p>embedding config: {{ embedding_model }} ({{ embedding_dim }} dims)</p>
+</body>
+</html>
