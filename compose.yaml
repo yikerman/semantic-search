@@ -10,10 +10,6 @@ services:
       # Host access is for local admin only; containers use the compose network.
       - "127.0.0.1:5432:5432"
     volumes:
-      # Defaults to the managed named volume. Set PGDATA_DIR in .env to an
-      # absolute host path to store the database there instead (bind mount).
-      # pg18+ images mount at /var/lib/postgresql (not .../data) and keep the
-      # data in a major-version subdirectory, e.g. <mount>/18/docker.
       - ${PGDATA_DIR:-pgdata}:/var/lib/postgresql
     healthcheck:
       # $$ defers expansion to the container shell, where POSTGRES_* are set.
@@ -32,8 +28,6 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-semsearch}:${POSTGRES_PASSWORD:-semsearch}@db:5432/${POSTGRES_DB:-semsearch}
     extra_hosts:
-      # Reach services on the host (e.g. a local embedding endpoint) as
-      # http://host.docker.internal:<port> from inside the container.
       - "host.docker.internal:host-gateway"
     depends_on:
       db:

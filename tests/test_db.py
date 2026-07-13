@@ -1,5 +1,7 @@
+from datetime import UTC, datetime
 from typing import Any, cast
 
+import pytest
 from psycopg import sql
 
 from semsearch.cli.db import load_schema_sql
@@ -8,6 +10,7 @@ from semsearch.web.db import (
     fetch_bm25_candidate_rows,
     fetch_dense_candidate_rows,
     fetch_lead_chunks,
+    list_recent_activity,
 )
 from semsearch.web.search.filters import SqlPredicate
 
@@ -137,3 +140,64 @@ async def test_lead_chunk_lookup_maps_page_ids_to_first_chunk():
     assert "chunk_index = 0" in conn.query
     assert conn.params == ([3, 5],)
     assert lead == {3: "lead three", 5: "lead five"}
+
+
+class ActivityCursor:
+    async def fetchall(self):
+        return [
+            (
+                "https://example.com/new",
+                "success",
+                datetime(2026, 7, 13, 10, 0, tzinfo=UTC),
+                None,
+                None,
+            ),
+            (
+                "https://example.com/broken",
+                "failure",
+                datetime(2026, 7, 13, 9, 0, tzinfo=UTC),
+                3,
+                "GET returned 404",
+            ),
+        ]
+
+
+class ActivityConnection:
+    def __init__(self) -> None:
+        self.query = None
+        self.params = None
+
+    async def execute(self, query, params):
+        self.query = query
+        self.params = params
+        return ActivityCursor()
+
+
+async def test_recent_activity_combines_successes_and_failures():
+    conn = ActivityConnection()
+
+    activity = await list_recent_activity(cast(Any, conn))
+
+    assert conn.query is not None
+    assert "FROM pages" in conn.query
+    assert "FROM crawl_jobs" in conn.query
+    assert "ORDER BY occurred_at DESC, url" in conn.query
+    assert conn.params == (10,)
+    assert [item.status for item in activity] == ["success", "failure"]
+    assert activity[1].attempt_count == 3
+    assert activity[1].detail == "GET returned 404"
+
+
+class InvalidActivityCursor:
+    async def fetchall(self):
+        return [("https://example.com/post", "pending", "not-a-datetime", None, None)]
+
+
+class InvalidActivityConnection:
+    async def execute(self, query, params):
+        return InvalidActivityCursor()
+
+
+async def test_recent_activity_validates_database_rows():
+    with pytest.raises(ValueError, match="invalid recent activity database row"):
+        await list_recent_activity(cast(Any, InvalidActivityConnection()))

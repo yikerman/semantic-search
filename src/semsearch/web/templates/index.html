@@ -1,42 +1,43 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>semsearch</title>
-</head>
-<body>
-  <h1>semsearch</h1>
-  <form action="/" method="get">
-    <input type="search" name="q" value="{{ q }}" size="60" autofocus>
-    <button type="submit">Search</button>
-  </form>
+{% extends "base.html" %}
 
-  {% if error %}
-  <p><strong>Error:</strong> {{ error }}</p>
-  {% endif %}
+{% block content %}
+<form class="search-form" action="/" method="get" role="search">
+  <label class="visually-hidden" for="query">Search personal blogs</label>
+  <input id="query" type="search" name="q" value="{{ q }}" size="60" autofocus>
+  <button type="submit">Search</button>
+</form>
 
-  {% if results is not none %}
-    {% if results %}
-    <ol>
-      {% for result in results %}
-      <li>
-        <a href="{{ result.url }}">{{ result.title or result.url }}</a>
-        <br>
-        <small>
-          {{ result.url }}
-          &middot; rrf {{ "%.6f" | format(result.scores["rrf"]) }}
-          {% for name, score in result.scores.items() if name != "rrf" %}
-          &middot; {{ name }} {{ "%.3f" | format(score) }}
-          {% endfor %}
-        </small>
-        <p>{{ result.content[:500] }}{% if result.content | length > 500 %}&hellip;{% endif %}</p>
-      </li>
-      {% endfor %}
-    </ol>
-    {% else %}
-    <p>No results.</p>
-    {% endif %}
+{% if error %}
+<p class="error" role="alert"><strong>Error:</strong> {{ error }}</p>
+{% endif %}
+
+{% if results is not none %}
+<section class="results" aria-labelledby="results-heading">
+  <h2 class="visually-hidden" id="results-heading">Search results</h2>
+  {% if results %}
+  <ol class="result-list">
+    {% for result in results %}
+    <li>
+      <article class="result">
+        <header class="result-header">
+          <h3><a href="{{ result.url }}">{{ result.title or result.url }}</a></h3>
+          <p class="result-meta">
+            {{ result.url }}
+            &middot; rrf {{ "%.6f" | format(result.scores["rrf"]) }}
+            {% for name, score in result.scores.items() if name != "rrf" %}
+            &middot; {{ name }} {{ "%.3f" | format(score) }}
+            {% endfor %}
+          </p>
+        </header>
+        <p class="result-snippet">{{ result.content[:500] }}{% if result.content | length > 500 %}&hellip;{% endif %}
+        </p>
+      </article>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p>No results.</p>
   {% endif %}
-</body>
-</html>
+</section>
+{% endif %}
+{% endblock %}

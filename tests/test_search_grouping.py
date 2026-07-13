@@ -117,7 +117,7 @@ async def test_search_embeds_once_and_passes_same_request_to_every_retriever():
         retrievers=[dense, bm25],
     )
 
-    await pipeline("query", fetch_k=12)
+    await pipeline("query", retriever_limit=12)
 
     assert embedder.queries == ["query"]
     assert dense_requests[0] is bm25_requests[0]

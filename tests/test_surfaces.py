@@ -1,4 +1,5 @@
 from contextlib import AbstractAsyncContextManager
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import httpx
@@ -6,8 +7,9 @@ import semsearch.cli.app as cli_module
 from typer.testing import CliRunner
 
 from semsearch.share.config import Settings
-from semsearch.share.status import FailedCrawlJob, IndexStats
+from semsearch.share.status import IndexStats
 from semsearch.web.app import create_app, prepare_display, templates
+from semsearch.web.db import RecentActivity
 from semsearch.web.search.models import Candidate
 
 
@@ -34,11 +36,12 @@ def test_removed_bulk_and_index_commands_are_not_exposed():
     assert "worker" in root_help.stdout
 
 
-def test_web_template_shows_rrf_and_native_scores_without_styling():
+def test_web_template_shows_scores_with_shared_semantic_structure():
     template = templates.get_template("index.html")
     html = template.render(
+        active_page="search",
         q="query",
-        error=None,
+        error="Embedding service unavailable",
         results=[
             Candidate(
                 chunk_id=1,
@@ -53,8 +56,15 @@ def test_web_template_shows_rrf_and_native_scores_without_styling():
 
     assert "rrf 0.012346" in html
     assert "dense 0.876" in html
+    assert '<link rel="stylesheet" href="/static/style.css">' in html
+    assert '<nav aria-label="Primary">' in html
+    assert html.count('aria-current="page"') == 1
+    assert ">Search</a>" in html
+    assert '<form class="search-form" action="/" method="get" role="search">' in html
+    assert '<label class="visually-hidden" for="query">' in html
+    assert '<p class="error" role="alert">' in html
+    assert '<article class="result">' in html
     assert "<style" not in html
-    assert "stylesheet" not in html
 
 
 class FakeConnection(AbstractAsyncContextManager):
@@ -104,7 +114,7 @@ async def test_prepare_display_swaps_matched_chunk_for_lead_chunk(monkeypatch):
     assert displayed[0].scores["rrf"] == 0.5
 
 
-async def test_status_page_mirrors_cli_status(monkeypatch):
+async def test_status_page_shows_recent_activity(monkeypatch):
     async def stats(conn):
         return IndexStats(
             site_count=5,
@@ -115,11 +125,26 @@ async def test_status_page_mirrors_cli_status(monkeypatch):
             failed_count=2,
         )
 
-    async def failures(conn):
-        return [FailedCrawlJob("https://example.com/gone", 3, "GET returned 404")]
+    async def activity(conn):
+        return [
+            RecentActivity(
+                "https://example.com/new",
+                "success",
+                datetime(2026, 7, 13, 10, 0, tzinfo=UTC),
+                None,
+                None,
+            ),
+            RecentActivity(
+                "https://example.com/gone",
+                "failure",
+                datetime(2026, 7, 13, 9, 0, tzinfo=UTC),
+                3,
+                "GET returned 404",
+            ),
+        ]
 
     monkeypatch.setattr("semsearch.web.app.fetch_index_stats", stats)
-    monkeypatch.setattr("semsearch.web.app.list_failed_jobs", failures)
+    monkeypatch.setattr("semsearch.web.app.list_recent_activity", activity)
     monkeypatch.setattr(
         "semsearch.web.app.get_settings",
         lambda: Settings(embedding_model="test-model", embedding_dim=8),
@@ -132,8 +157,20 @@ async def test_status_page_mirrors_cli_status(monkeypatch):
         response = await client.get("/status")
 
     assert response.status_code == 200
-    assert "<th>pages</th><td>100</td>" in response.text
-    assert "<th>retrying</th><td>3</td>" in response.text
-    assert "https://example.com/gone (3 attempts): GET returned 404" in response.text
+    assert response.text.count('aria-current="page"') == 1
+    assert ">Status</a>" in response.text
+    assert "<caption>Index totals</caption>" in response.text
+    assert '<th scope="row">pages</th>' in response.text
+    assert "<td>100</td>" in response.text
+    assert '<th scope="row">retrying</th>' in response.text
+    assert "<td>3</td>" in response.text
+    assert "Recent activity" in response.text
+    assert "Recent failures" not in response.text
+    assert '<strong class="activity-status">success</strong>' in response.text
+    assert '<strong class="activity-status">failure</strong>' in response.text
+    assert "https://example.com/new" in response.text
+    assert "3 attempts &middot; GET returned 404" in response.text
+    assert 'datetime="2026-07-13T10:00:00+00:00"' in response.text
     assert "test-model (8 dims)" in response.text
+    assert '<footer class="status-footer">' in response.text
     assert "<style" not in response.text

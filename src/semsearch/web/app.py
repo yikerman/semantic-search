@@ -7,6 +7,7 @@ from time import perf_counter
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from psycopg_pool import AsyncConnectionPool
 
@@ -14,8 +15,8 @@ from semsearch.share.config import get_settings
 from semsearch.share.db import create_pool
 from semsearch.share.embeddings import EmbeddingError, create_embeddings
 from semsearch.share.logging import configure_logging
-from semsearch.share.status import fetch_index_stats, list_failed_jobs
-from semsearch.web.db import fetch_lead_chunks, ping
+from semsearch.share.status import fetch_index_stats
+from semsearch.web.db import fetch_lead_chunks, list_recent_activity, ping
 from semsearch.web.search.bm25 import retrieve_bm25
 from semsearch.web.search.dense import retrieve_dense
 from semsearch.web.search.models import Candidate
@@ -78,6 +79,11 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(title="semsearch", lifespan=lifespan)
+    app.mount(
+        "/static",
+        StaticFiles(directory=Path(__file__).parent / "static"),
+        name="static",
+    )
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request, q: str = ""):
@@ -101,21 +107,29 @@ def create_app() -> FastAPI:
                     len(results),
                 )
         return templates.TemplateResponse(
-            request, "index.html", {"q": q, "results": results, "error": error}
+            request,
+            "index.html",
+            {
+                "active_page": "search",
+                "q": q,
+                "results": results,
+                "error": error,
+            },
         )
 
     @app.get("/status", response_class=HTMLResponse)
     async def status(request: Request):
         async with request.app.state.pool.connection() as conn:
             stats = await fetch_index_stats(conn)
-            failures = await list_failed_jobs(conn)
+            activity = await list_recent_activity(conn)
         settings = get_settings()
         return templates.TemplateResponse(
             request,
             "status.html",
             {
+                "active_page": "status",
                 "stats": stats,
-                "failures": failures,
+                "activity": activity,
                 "embedding_model": settings.embedding_model,
                 "embedding_dim": settings.embedding_dim,
             },

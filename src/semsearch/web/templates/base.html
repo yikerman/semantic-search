@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}semsearch{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+  <header class="site-header">
+    <h1 class="site-title"><a href="/">semsearch</a></h1>
+    <nav aria-label="Primary">
+      <a href="/" {% if active_page=="search" %} aria-current="page" {% endif %}>Search</a>
+      <a href="/status" {% if active_page=="status" %} aria-current="page" {% endif %}>Status</a>
+    </nav>
+  </header>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  {% block page_footer %}{% endblock %}
+</body>
+
+</html>

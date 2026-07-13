@@ -31,12 +31,12 @@ async def search(
     retrievers: Sequence[Retriever],
     rerankers: Sequence[Reranker] = (),
     fusion: Fusion = reciprocal_rank_fusion,
-    limit: int = 32,
-    fetch_k: int = 64,
+    limit: int = 64,
+    retriever_limit: int = 64,
     filters: Sequence[SearchFilter] = (),
 ) -> list[Candidate]:
     query_embedding = await embed_query(query)
-    request = RetrievalRequest(query, tuple(query_embedding), tuple(filters), fetch_k)
+    request = RetrievalRequest(query, tuple(query_embedding), tuple(filters), retriever_limit)
     retrieval_runs = await map_concurrently(
         retrievers,
         limit=len(retrievers),
