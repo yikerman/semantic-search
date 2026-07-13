@@ -86,9 +86,10 @@ docker compose exec app /app/.venv/bin/python scripts/import_indieblog_feeds.py 
 
 The database defaults to a managed `pgdata` volume. To store it on a specific
 disk, set `PGDATA_DIR` in `.env` to an absolute host path (NVMe, mounted
-`noatime`); Compose bind-mounts it as the Postgres data directory. Changing it
-after the database exists points Postgres at a fresh location, so move the old
-data first or re-index.
+`noatime`); Compose bind-mounts it and Postgres keeps its data in a
+major-version subdirectory inside it (e.g. `18/docker`). Changing it after the
+database exists points Postgres at a fresh location, so move the old data first
+or re-index.
 
 Changing `EMBEDDING_MODEL` or `EMBEDDING_DIM` invalidates the index - wipe and
 re-index: TODO

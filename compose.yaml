@@ -12,7 +12,9 @@ services:
     volumes:
       # Defaults to the managed named volume. Set PGDATA_DIR in .env to an
       # absolute host path to store the database there instead (bind mount).
-      - ${PGDATA_DIR:-pgdata}:/var/lib/postgresql/data
+      # pg18+ images mount at /var/lib/postgresql (not .../data) and keep the
+      # data in a major-version subdirectory, e.g. <mount>/18/docker.
+      - ${PGDATA_DIR:-pgdata}:/var/lib/postgresql
     healthcheck:
       # $$ defers expansion to the container shell, where POSTGRES_* are set.
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
