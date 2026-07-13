@@ -65,17 +65,26 @@ async def ping(conn: psycopg.AsyncConnection) -> None:
     await conn.execute("SELECT 1")
 
 
-async def fetch_lead_chunks(
+async def fetch_page_chunks(
     conn: psycopg.AsyncConnection, *, page_ids: Sequence[int]
-) -> dict[int, str]:
+) -> dict[int, tuple[str, ...]]:
     cur = await conn.execute(
         """
         SELECT page_id, content FROM chunks
-        WHERE page_id = ANY(%s) AND chunk_index = 0
+        WHERE page_id = ANY(%s)
+        ORDER BY page_id, chunk_index
         """,
         (list(page_ids),),
     )
-    return {page_id: content for page_id, content in await cur.fetchall()}
+    chunks: dict[int, list[str]] = {}
+    for row in await cur.fetchall():
+        if len(row) != 2:
+            raise ValueError("invalid page chunk database row")
+        page_id, content = row
+        if not isinstance(page_id, int) or not isinstance(content, str):
+            raise ValueError("invalid page chunk database row")
+        chunks.setdefault(page_id, []).append(content)
+    return {page_id: tuple(content) for page_id, content in chunks.items()}
 
 
 async def list_recent_activity(

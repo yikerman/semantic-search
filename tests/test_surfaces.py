@@ -1,6 +1,5 @@
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
-from typing import Any, cast
 
 import httpx
 import semsearch.cli.app as cli_module
@@ -8,9 +7,9 @@ from typer.testing import CliRunner
 
 from semsearch.share.config import Settings
 from semsearch.share.status import IndexStats
-from semsearch.web.app import create_app, prepare_display, templates
+from semsearch.web.app import DisplayResult, create_app, prepare_display, templates
 from semsearch.web.db import RecentActivity
-from semsearch.web.search.models import Candidate
+from semsearch.web.search.models import PageCandidate
 
 
 def test_cli_is_admin_only():
@@ -41,27 +40,35 @@ def test_web_template_shows_scores_with_shared_semantic_structure():
     html = template.render(
         active_page="search",
         q="query",
+        encourage_long_content=True,
         error="Embedding service unavailable",
         results=[
-            Candidate(
-                chunk_id=1,
+            DisplayResult(
                 page_id=1,
                 url="https://example.com/post",
                 title="Post",
-                content="Snippet",
-                scores={"dense": 0.8765, "rrf": 0.01234567},
+                snippet="Snippet",
+                is_truncated=False,
+                scores={
+                    "dense": 0.8765,
+                    "length": 12_345,
+                    "rrf": 0.01234567,
+                },
             )
         ],
     )
 
     assert "rrf 0.012346" in html
     assert "dense 0.876" in html
+    assert "length 12,345 chars" in html
     assert '<link rel="stylesheet" href="/static/style.css">' in html
     assert '<nav aria-label="Primary">' in html
     assert html.count('aria-current="page"') == 1
     assert ">Search</a>" in html
     assert '<form class="search-form" action="/" method="get" role="search">' in html
     assert '<label class="visually-hidden" for="query">' in html
+    assert 'name="encourage_long_content" value="true"' in html
+    assert "checked" in html
     assert '<p class="error" role="alert">' in html
     assert '<article class="result">' in html
     assert "<style" not in html
@@ -80,37 +87,30 @@ class FakePool:
         return FakeConnection()
 
 
-async def test_prepare_display_swaps_matched_chunk_for_lead_chunk(monkeypatch):
-    async def lead(conn, *, page_ids):
-        assert page_ids == [1, 2]
-        return {1: "Lead chunk"}
-
-    monkeypatch.setattr("semsearch.web.app.fetch_lead_chunks", lead)
+def test_prepare_display_extracts_bounded_page_lead():
     results = [
-        Candidate(
-            chunk_id=5,
+        PageCandidate(
             page_id=1,
             url="https://example.com/a",
             title="A",
-            content="mid-article window",
+            content="x" * 501,
             scores={"rrf": 0.5},
         ),
-        Candidate(
-            chunk_id=9,
+        PageCandidate(
             page_id=2,
             url="https://example.com/b",
             title="B",
-            content="matched fallback",
+            content="short page",
             scores={"rrf": 0.4},
         ),
     ]
 
-    displayed = await prepare_display(cast(Any, FakePool()), results)
+    displayed = prepare_display(results)
 
-    assert [result.content for result in displayed] == [
-        "Lead chunk",
-        "matched fallback",
-    ]
+    assert displayed[0].snippet == "x" * 500
+    assert displayed[0].is_truncated is True
+    assert displayed[1].snippet == "short page"
+    assert displayed[1].is_truncated is False
     assert displayed[0].scores["rrf"] == 0.5
 
 

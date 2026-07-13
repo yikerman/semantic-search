@@ -1,8 +1,10 @@
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
+from psycopg_pool import AsyncConnectionPool
+
 from semsearch.web.search.filters import SearchFilter
-from semsearch.web.search.models import Candidate
+from semsearch.web.search.models import ChunkCandidate, PageCandidate
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,11 +16,16 @@ class RetrievalRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class RankedRun:
+class RankedRun[T]:
     name: str
-    candidates: tuple[Candidate, ...]
+    candidates: tuple[T, ...]
 
 
-type Retriever = Callable[[RetrievalRequest], Awaitable[RankedRun]]
-type Reranker = Callable[[str, Sequence[Candidate]], Awaitable[RankedRun]]
-type Fusion = Callable[[Sequence[RankedRun]], list[Candidate]]
+type Retriever = Callable[
+    [RetrievalRequest, AsyncConnectionPool],
+    Awaitable[RankedRun[ChunkCandidate]],
+]
+type Reranker = Callable[
+    [str, Sequence[PageCandidate]], Awaitable[RankedRun[PageCandidate]]
+]
+type Fusion = Callable[[Sequence[RankedRun[PageCandidate]]], list[PageCandidate]]

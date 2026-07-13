@@ -1,11 +1,18 @@
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from types import MappingProxyType
 
 from semsearch.web.search.base import RankedRun
-from semsearch.web.search.models import Candidate
+from semsearch.web.search.models import ChunkCandidate, PageCandidate
+
+RUN_WEIGHTS: Mapping[str, float] = MappingProxyType(
+    {"dense": 1.0, "bm25": 1.0, "length": 0.5}
+)
 
 
-def union_candidates(runs: Sequence[RankedRun]) -> list[Candidate]:
-    candidates: dict[int, Candidate] = {}
+def union_chunk_candidates(
+    runs: Sequence[RankedRun[ChunkCandidate]],
+) -> list[ChunkCandidate]:
+    candidates: dict[int, ChunkCandidate] = {}
     scores: dict[int, dict[str, float]] = {}
     for run in runs:
         for candidate in run.candidates:
@@ -17,18 +24,42 @@ def union_candidates(runs: Sequence[RankedRun]) -> list[Candidate]:
     ]
 
 
+def union_page_candidates(
+    runs: Sequence[RankedRun[PageCandidate]],
+) -> list[PageCandidate]:
+    candidates: dict[int, PageCandidate] = {}
+    scores: dict[int, dict[str, float]] = {}
+    for run in runs:
+        for candidate in run.candidates:
+            candidates.setdefault(candidate.page_id, candidate)
+            scores.setdefault(candidate.page_id, {}).update(candidate.scores)
+    return [
+        candidate.with_scores(scores[page_id])
+        for page_id, candidate in candidates.items()
+    ]
+
+
 def reciprocal_rank_fusion(
-    runs: Sequence[RankedRun], *, k: int = 60
-) -> list[Candidate]:
-    candidates = {candidate.chunk_id: candidate for candidate in union_candidates(runs)}
+    runs: Sequence[RankedRun[PageCandidate]], *, k: int = 60
+) -> list[PageCandidate]:
+    weights: list[float] = []
+    for run in runs:
+        try:
+            weights.append(RUN_WEIGHTS[run.name])
+        except KeyError as exc:
+            raise ValueError(f"missing RRF weight for run {run.name!r}") from exc
+
+    candidates = {
+        candidate.page_id: candidate for candidate in union_page_candidates(runs)
+    }
     rrf_scores = dict.fromkeys(candidates, 0.0)
 
-    for run in runs:
+    for run, weight in zip(runs, weights, strict=True):
         for rank, candidate in enumerate(run.candidates, start=1):
-            rrf_scores[candidate.chunk_id] += 1 / (k + rank)
+            rrf_scores[candidate.page_id] += weight / (k + rank)
 
     fused = [
-        candidate.with_scores({**candidate.scores, "rrf": rrf_scores[chunk_id]})
-        for chunk_id, candidate in candidates.items()
+        candidate.with_scores({**candidate.scores, "rrf": rrf_scores[page_id]})
+        for page_id, candidate in candidates.items()
     ]
     return sorted(fused, key=lambda candidate: candidate.scores["rrf"], reverse=True)

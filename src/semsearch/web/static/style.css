@@ -90,11 +90,16 @@ main>h2 {
 }
 
 .search-form {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.search-query {
   display: flex;
   gap: 0.5rem;
 }
 
-input,
+input[type="search"],
 button {
   min-height: 2.75rem;
   border: 1px solid #aebabc;
@@ -102,7 +107,7 @@ button {
   font: inherit;
 }
 
-input {
+input[type="search"] {
   min-width: 0;
   flex: 1;
   padding: 0.55rem 0.7rem;
@@ -120,6 +125,22 @@ button {
 
 button:hover {
   background: #0f525b;
+}
+
+.search-option {
+  display: flex;
+  align-items: center;
+  width: fit-content;
+  gap: 0.45rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.search-option input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--accent);
 }
 
 .error {
@@ -263,7 +284,7 @@ td {
 }
 
 @media (max-width: 34rem) {
-  .search-form {
+  .search-query {
     flex-direction: column;
   }
 

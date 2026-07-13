@@ -2,9 +2,15 @@
 
 {% block content %}
 <form class="search-form" action="/" method="get" role="search">
-  <label class="visually-hidden" for="query">Search personal blogs</label>
-  <input id="query" type="search" name="q" value="{{ q }}" size="60" autofocus>
-  <button type="submit">Search</button>
+  <div class="search-query">
+    <label class="visually-hidden" for="query">Search personal blogs</label>
+    <input id="query" type="search" name="q" value="{{ q }}" size="60" autofocus>
+    <button type="submit">Search</button>
+  </div>
+  <label class="search-option">
+    <input type="checkbox" name="encourage_long_content" value="true" {% if encourage_long_content %}checked{% endif %}>
+    <span>Encourage long content</span>
+  </label>
 </form>
 
 {% if error %}
@@ -25,11 +31,15 @@
             {{ result.url }}
             &middot; rrf {{ "%.6f" | format(result.scores["rrf"]) }}
             {% for name, score in result.scores.items() if name != "rrf" %}
+            {% if name == "length" %}
+            &middot; length {{ "{:,}".format(score | int) }} chars
+            {% else %}
             &middot; {{ name }} {{ "%.3f" | format(score) }}
+            {% endif %}
             {% endfor %}
           </p>
         </header>
-        <p class="result-snippet">{{ result.content[:500] }}{% if result.content | length > 500 %}&hellip;{% endif %}
+        <p class="result-snippet">{{ result.snippet }}{% if result.is_truncated %}&hellip;{% endif %}
         </p>
       </article>
     </li>

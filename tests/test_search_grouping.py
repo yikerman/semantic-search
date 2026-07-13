@@ -1,17 +1,27 @@
 from collections.abc import Sequence
-from functools import partial
-from typing import cast
+from contextlib import AbstractAsyncContextManager
+from typing import Any, cast
 
 import pytest
 
+from semsearch.web import db
 from semsearch.web.search.base import RankedRun, RetrievalRequest, Retriever
-from semsearch.web.search.fusion import reciprocal_rank_fusion, union_candidates
-from semsearch.web.search.models import Candidate
-from semsearch.web.search.pipeline import group_by_page, search
+from semsearch.web.search.fusion import (
+    reciprocal_rank_fusion,
+    union_chunk_candidates,
+)
+from semsearch.web.search.models import ChunkCandidate, PageCandidate
+from semsearch.web.search.pipeline import (
+    aggregate_page_run,
+    compose_chunks,
+    compose_page_candidates,
+    rerank_by_length,
+    search,
+)
 
 
-def cand(chunk_id: int, page_id: int, **scores: float) -> Candidate:
-    return Candidate(
+def chunk(chunk_id: int, page_id: int, **scores: float) -> ChunkCandidate:
+    return ChunkCandidate(
         chunk_id=chunk_id,
         page_id=page_id,
         url=f"https://blog.example/p{page_id}",
@@ -21,15 +31,31 @@ def cand(chunk_id: int, page_id: int, **scores: float) -> Candidate:
     )
 
 
-def run(name: str, *candidates: Candidate) -> RankedRun:
+def page(page_id: int, content: str = "content", **scores: float) -> PageCandidate:
+    return PageCandidate(
+        page_id=page_id,
+        url=f"https://blog.example/p{page_id}",
+        title=f"Post {page_id}",
+        content=content,
+        scores=scores,
+    )
+
+
+def chunk_run(name: str, *candidates: ChunkCandidate) -> RankedRun[ChunkCandidate]:
     return RankedRun(name, candidates)
 
 
-def test_union_candidates_combines_scores_without_mutating_inputs():
-    dense = cand(1, 1, dense=0.9)
-    lexical = cand(1, 1, bm25=4.2)
+def page_run(name: str, *candidates: PageCandidate) -> RankedRun[PageCandidate]:
+    return RankedRun(name, candidates)
 
-    merged = union_candidates([run("dense", dense), run("bm25", lexical)])
+
+def test_union_chunk_candidates_combines_scores_without_mutating_inputs():
+    dense = chunk(1, 1, dense=0.9)
+    lexical = chunk(1, 1, bm25=4.2)
+
+    merged = union_chunk_candidates(
+        [chunk_run("dense", dense), chunk_run("bm25", lexical)]
+    )
 
     assert merged[0].scores == {"dense": 0.9, "bm25": 4.2}
     assert dense.scores == {"dense": 0.9}
@@ -38,107 +64,156 @@ def test_union_candidates_combines_scores_without_mutating_inputs():
         cast(dict[str, float], merged[0].scores)["other"] = 1.0
 
 
-def test_rrf_uses_ranked_runs_and_preserves_native_scores():
-    dense = run("dense", cand(1, 1, dense=0.9), cand(2, 2, dense=0.8))
-    lexical = run("bm25", cand(2, 2, bm25=4.0), cand(3, 3, bm25=3.0))
+def test_weighted_rrf_uses_page_runs_and_preserves_native_scores():
+    dense = page_run("dense", page(1, dense=0.9), page(2, dense=0.8))
+    lexical = page_run("bm25", page(2, bm25=4.0), page(3, bm25=3.0))
 
     fused = reciprocal_rank_fusion([dense, lexical], k=60)
 
-    assert [candidate.chunk_id for candidate in fused] == [2, 1, 3]
+    assert [candidate.page_id for candidate in fused] == [2, 1, 3]
     assert fused[0].scores == {
         "dense": 0.8,
         "bm25": 4.0,
         "rrf": pytest.approx(1 / 62 + 1 / 61),
     }
-    assert fused[1].scores["rrf"] == pytest.approx(1 / 61)
 
 
-def test_group_by_page_keeps_highest_rrf_chunk():
-    results = group_by_page(
-        [
-            cand(1, 1, dense=0.99, rrf=0.01),
-            cand(2, 1, dense=0.10, rrf=0.02),
-            cand(3, 2, dense=0.80, rrf=0.015),
-        ],
-        limit=10,
+def test_length_run_contributes_half_weight_to_rrf():
+    dense = page_run("dense", page(1, dense=0.9), page(2, dense=0.8))
+    lexical = page_run("bm25", page(2, bm25=4.0), page(1, bm25=3.0))
+    length = page_run("length", page(2, length=2000), page(1, length=1000))
+
+    fused = reciprocal_rank_fusion([dense, lexical, length], k=60)
+
+    assert [candidate.page_id for candidate in fused] == [2, 1]
+    assert fused[0].scores["rrf"] == pytest.approx(1 / 62 + 1 / 61 + 0.5 / 61)
+    assert fused[1].scores["rrf"] == pytest.approx(1 / 61 + 1 / 62 + 0.5 / 62)
+
+
+def test_rrf_rejects_run_without_explicit_weight():
+    with pytest.raises(ValueError, match="missing RRF weight.*cross_encoder"):
+        reciprocal_rank_fusion([page_run("cross_encoder", page(1))])
+
+
+def test_compose_chunks_removes_exact_overlap_and_separates_disjoint_chunks():
+    assert (
+        compose_chunks(["w0 w1 w2 w3", "w3 w4 w5 w6", "w6 w7"])
+        == "w0 w1 w2 w3 w4 w5 w6 w7"
+    )
+    assert compose_chunks(["alpha", "beta"]) == "alpha beta"
+    assert compose_chunks(["alpha", "again"]) == "alpha again"
+    assert compose_chunks([]) == ""
+
+
+def test_compose_page_candidates_requires_chunks_for_every_retrieved_page():
+    candidates = [chunk(1, 1, dense=0.9), chunk(2, 2, dense=0.8)]
+
+    with pytest.raises(ValueError, match="retrieved page 2 has no chunks"):
+        compose_page_candidates(candidates, {1: ("content",)})
+
+
+def test_page_run_rewards_top_three_chunk_scores_including_negative_scores():
+    pages = {1: page(1), 2: page(2), 3: page(3)}
+    run = chunk_run(
+        "dense",
+        chunk(1, 1, dense=0.9),
+        chunk(2, 1, dense=0.8),
+        chunk(3, 1, dense=0.7),
+        chunk(4, 1, dense=0.6),
+        chunk(5, 2, dense=0.95),
+        chunk(6, 3, dense=-0.1),
+        chunk(7, 3, dense=-0.2),
+        chunk(8, 3, dense=-0.3),
     )
 
-    assert [(result.page_id, result.scores["rrf"]) for result in results] == [
-        (1, 0.02),
-        (2, 0.015),
-    ]
-    assert results[0].content == "chunk 2 of page 1"
+    aggregated = aggregate_page_run(run, pages)
+
+    assert [candidate.page_id for candidate in aggregated.candidates] == [1, 2, 3]
+    assert aggregated.candidates[0].scores["dense"] == pytest.approx(0.987)
+    assert aggregated.candidates[2].scores["dense"] == pytest.approx(-0.123)
+
+
+async def test_length_reranker_scores_and_orders_full_page_content():
+    candidates = [page(1, "short"), page(2, "a much longer page")]
+
+    ranked = await rerank_by_length("ignored query", candidates)
+
+    assert [candidate.page_id for candidate in ranked.candidates] == [2, 1]
+    assert ranked.candidates[0].scores["length"] == 18.0
+    assert "length" not in candidates[0].scores
 
 
 class FakeEmbedder:
     def __init__(self) -> None:
         self.queries: list[str] = []
 
-    async def embed_documents(self, texts):
-        return [[1.0, 0.0] for _ in texts]
-
-    async def embed_query(self, text):
+    async def embed_query(self, text: str) -> list[float]:
         self.queries.append(text)
         return [1.0, 0.0]
 
 
+class FakeConnection(AbstractAsyncContextManager):
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return None
+
+
+class FakePool:
+    def connection(self):
+        return FakeConnection()
+
+
 def fake_retriever(
     name: str,
-    candidates: Sequence[Candidate],
-    requests: list[RetrievalRequest] | None = None,
+    candidates: Sequence[ChunkCandidate],
+    calls: list[tuple[RetrievalRequest, object]],
 ) -> Retriever:
-    async def retrieve(request: RetrievalRequest) -> RankedRun:
-        if requests is not None:
-            requests.append(request)
+    async def retrieve(request: RetrievalRequest, pool: object):
+        calls.append((request, pool))
         return RankedRun(name, tuple(candidates))
 
-    return retrieve
+    return cast(Retriever, retrieve)
 
 
-async def reverse_reranker(query: str, candidates: Sequence[Candidate]) -> RankedRun:
-    ranked = tuple(
-        candidate.with_scores(
-            {**candidate.scores, "cross_encoder": float(candidate.chunk_id)}
-        )
-        for candidate in reversed(candidates)
-    )
-    return RankedRun("cross_encoder", ranked)
-
-
-async def test_search_embeds_once_and_passes_same_request_to_every_retriever():
+async def test_search_materializes_and_fuses_unique_pages(monkeypatch):
+    pool = FakePool()
     embedder = FakeEmbedder()
-    dense_requests: list[RetrievalRequest] = []
-    bm25_requests: list[RetrievalRequest] = []
-    dense = fake_retriever("dense", [cand(1, 1, dense=0.9)], dense_requests)
-    bm25 = fake_retriever("bm25", [cand(2, 2, bm25=3.0)], bm25_requests)
-    pipeline = partial(
-        search,
-        embed_query=embedder.embed_query,
-        retrievers=[dense, bm25],
+    calls: list[tuple[RetrievalRequest, object]] = []
+    fetches: list[tuple[object, list[int]]] = []
+    dense = fake_retriever(
+        "dense",
+        [
+            chunk(1, 1, dense=0.9),
+            chunk(2, 1, dense=0.8),
+            chunk(3, 2, dense=0.85),
+        ],
+        calls,
     )
+    bm25 = fake_retriever("bm25", [chunk(3, 2, bm25=2.0)], calls)
 
-    await pipeline("query", retriever_limit=12)
+    async def fetch_chunks(conn, *, page_ids):
+        fetches.append((conn, page_ids))
+        return {1: ("alpha beta", "beta gamma"), 2: ("short",)}
+
+    monkeypatch.setattr(db, "fetch_page_chunks", fetch_chunks)
+
+    results = await search(
+        "query",
+        pool=cast(Any, pool),
+        embed_query=embedder.embed_query,
+        retrievers=(dense, bm25),
+        retriever_limit=12,
+    )
 
     assert embedder.queries == ["query"]
-    assert dense_requests[0] is bm25_requests[0]
-    assert dense_requests[0].query_embedding == (1.0, 0.0)
-    assert dense_requests[0].limit == 12
-
-
-async def test_reranker_run_contributes_to_rrf_ordering():
-    retriever = fake_retriever(
-        "dense",
-        [cand(1, 1, dense=0.9), cand(2, 2, dense=0.8), cand(3, 3, dense=0.7)],
-    )
-    pipeline = partial(
-        search,
-        embed_query=FakeEmbedder().embed_query,
-        retrievers=[retriever],
-        rerankers=[reverse_reranker],
-    )
-
-    results = await pipeline("query")
-
-    assert [result.page_id for result in results] == [1, 3, 2]
-    assert results[0].scores["cross_encoder"] == 1.0
-    assert results[0].scores["rrf"] == pytest.approx(1 / 61 + 1 / 63)
+    assert calls[0][0] is calls[1][0]
+    assert all(call_pool is pool for _, call_pool in calls)
+    assert calls[0][0].limit == 12
+    assert fetches[0][1] == [1, 2]
+    assert [result.page_id for result in results] == [2, 1]
+    assert len({result.page_id for result in results}) == len(results)
+    assert results[1].content == "alpha beta gamma"
+    assert results[1].scores["dense"] == pytest.approx(0.98)
+    assert "length" not in results[0].scores

@@ -9,7 +9,7 @@ from semsearch.share.config import Settings
 from semsearch.web.db import (
     fetch_bm25_candidate_rows,
     fetch_dense_candidate_rows,
-    fetch_lead_chunks,
+    fetch_page_chunks,
     list_recent_activity,
 )
 from semsearch.web.search.filters import SqlPredicate
@@ -115,12 +115,12 @@ async def test_bm25_query_uses_search_vector_and_preserves_filter_params():
     assert rows[0].rank == 0.25
 
 
-class LeadCursor:
+class PageChunkCursor:
     async def fetchall(self):
-        return [(3, "lead three"), (5, "lead five")]
+        return [(3, "first three"), (3, "second three"), (5, "only five")]
 
 
-class LeadConnection:
+class PageChunkConnection:
     def __init__(self) -> None:
         self.query = None
         self.params = None
@@ -128,18 +128,21 @@ class LeadConnection:
     async def execute(self, query, params):
         self.query = query
         self.params = params
-        return LeadCursor()
+        return PageChunkCursor()
 
 
-async def test_lead_chunk_lookup_maps_page_ids_to_first_chunk():
-    conn = LeadConnection()
+async def test_page_chunk_lookup_groups_ordered_content():
+    conn = PageChunkConnection()
 
-    lead = await fetch_lead_chunks(cast(Any, conn), page_ids=(3, 5))
+    chunks = await fetch_page_chunks(cast(Any, conn), page_ids=(3, 5))
 
     assert conn.query is not None
-    assert "chunk_index = 0" in conn.query
+    assert "ORDER BY page_id, chunk_index" in conn.query
     assert conn.params == ([3, 5],)
-    assert lead == {3: "lead three", 5: "lead five"}
+    assert chunks == {
+        3: ("first three", "second three"),
+        5: ("only five",),
+    }
 
 
 class ActivityCursor:
