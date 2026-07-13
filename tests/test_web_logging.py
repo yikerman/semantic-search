@@ -59,7 +59,9 @@ async def test_search_logs_handled_embedding_error_without_query(caplog, monkeyp
         ) as client:
             response = await client.get("/", params={"q": query})
 
-    assert response.status_code == 200
+    assert response.status_code == 503
+    assert "The embedding service is temporarily unavailable." in response.text
+    assert "service unavailable" not in response.text
     assert "Search failed after" in caplog.messages[-1]
     assert "embedding error" in caplog.messages[-1]
     assert "service unavailable" not in caplog.text

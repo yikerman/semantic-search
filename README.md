@@ -4,15 +4,15 @@
 
 ## Goal
 
-Semsearch is an embedding-first and focused indexing and searching (ideas
-heavily borrowed from AI RAG architecture) website.
+Semsearch is an embedding-focused indexing and searching (ideas heavily
+borrowed from agentic AI RAG architecture) website.
 
 ## Implementation
 
 FastAPI frontend & pgvector database
 
 See `search(...)` from `semsearch.web.search.pipeline`, pretty
-self-explaintory, hopefully.
+self-explanatory code, hopefully.
 
 ## Structure
 

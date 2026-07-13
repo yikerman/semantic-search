@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from time import perf_counter
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status as http_status
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -86,6 +86,7 @@ def create_app() -> FastAPI:
     ):
         results = None
         error = None
+        status_code = http_status.HTTP_200_OK
         query = q.strip()
         if query:
             rerankers = (rerank_by_length,) if encourage_long_content else ()
@@ -99,8 +100,9 @@ def create_app() -> FastAPI:
             started_at = perf_counter()
             try:
                 results = prepare_display(await run_search(query))
-            except EmbeddingError as exc:
-                error = str(exc)
+            except EmbeddingError:
+                error = "The embedding service is temporarily unavailable."
+                status_code = http_status.HTTP_503_SERVICE_UNAVAILABLE
                 logger.warning(
                     "Search failed after %.3f seconds due to an embedding error",
                     perf_counter() - started_at,
@@ -121,6 +123,7 @@ def create_app() -> FastAPI:
                 "results": results,
                 "error": error,
             },
+            status_code=status_code,
         )
 
     @app.get("/status", response_class=HTMLResponse)
