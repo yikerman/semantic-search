@@ -65,7 +65,10 @@ Configured sites use normalized origins as human-readable ids and surrogate
 indexed by `site poll`. The continuous `worker` scatters polling, discovers
 current and historical URLs into a durable queue, and ingests queued pages with
 bounded concurrency and retry backoff; concurrent ingest loops prefer sites no
-other loop is working so fetches spread across origins.
+other loop is working so fetches spread across origins. When a feed shows only
+unseen URLs, historical discovery follows RFC 5005 links, then WordPress feed
+pagination, then the configured sitemap, stopping after `HISTORY_POST_LIMIT`
+URLs.
 
 ## Constraints
 

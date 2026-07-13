@@ -1,28 +1,38 @@
 services:
   db:
-    image: docker.io/pgvector/pgvector:pg17
+    restart: unless-stopped
+    image: docker.io/pgvector/pgvector:pg18-trixie
     environment:
-      POSTGRES_USER: semsearch
-      POSTGRES_PASSWORD: semsearch
-      POSTGRES_DB: semsearch
+      POSTGRES_USER: ${POSTGRES_USER:-semsearch}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-semsearch}
+      POSTGRES_DB: ${POSTGRES_DB:-semsearch}
     ports:
-      - "5432:5432"
+      # Host access is for local admin only; containers use the compose network.
+      - "127.0.0.1:5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # Defaults to the managed named volume. Set PGDATA_DIR in .env to an
+      # absolute host path to store the database there instead (bind mount).
+      - ${PGDATA_DIR:-pgdata}:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U semsearch -d semsearch"]
+      # $$ defers expansion to the container shell, where POSTGRES_* are set.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 10
 
   app:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: Containerfile
     profiles: ["deploy"]
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://semsearch:semsearch@db:5432/semsearch
+      DATABASE_URL: postgresql://${POSTGRES_USER:-semsearch}:${POSTGRES_PASSWORD:-semsearch}@db:5432/${POSTGRES_DB:-semsearch}
+    extra_hosts:
+      # Reach services on the host (e.g. a local embedding endpoint) as
+      # http://host.docker.internal:<port> from inside the container.
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy
@@ -30,6 +40,7 @@ services:
       - "8000:8000"
 
   worker:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: Containerfile
@@ -37,7 +48,9 @@ services:
     command: ["/app/.venv/bin/semsearch", "worker"]
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://semsearch:semsearch@db:5432/semsearch
+      DATABASE_URL: postgresql://${POSTGRES_USER:-semsearch}:${POSTGRES_PASSWORD:-semsearch}@db:5432/${POSTGRES_DB:-semsearch}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy

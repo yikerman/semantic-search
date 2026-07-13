@@ -1,22 +1,26 @@
-*Current status: PoC, AI gen not fully manually reviewed*
-
 # semsearch
 
-Embeddings-first search for personal blogs and small sites. Ranking is semantic
-similarity only; the project avoids traditional Google PageRank-style signals so
-that indie sites can compete.
+*Current status: PoC, AI gen not fully manually reviewed*
 
-## Stack
+## Goal
+
+Embeddings-first search for personal blogs and small sites. Ranking is semantic
+similarity only in order to avoid Google PageRank-style large site monopoly.
+
+## Implementation
 
 - FastAPI + raw async psycopg3
-- Typer admin CLI tool
-- Postgres + pgvector
-- OpenAI-compatible embeddings API
-- Server-rendered HTML
+- Typer admin CLI for site and index administration
+- Postgres + pgvector (`halfvec` HNSW cosine ANN)
+- Any OpenAI-compatible `/embeddings` endpoint
 
-## Code structure
+Search compiles filters into bound SQL, embeds the query once, runs dense and
+Postgres full-text retrievers concurrently, fuses them with reciprocal rank
+fusion (RRF), then keeps the best chunk per page. See CLAUDE.md for the score
+contract and ingest pipeline. Configuration is environment variables or `.env`
+(see `.env.example`); logs go to stderr as text, `LOG_LEVEL` default `INFO`.
 
-Source code is organized by owning surface:
+## Structure
 
 ```text
 src/semsearch/
@@ -25,35 +29,22 @@ src/semsearch/
 `-- web/    # FastAPI application, search pipeline, and templates
 ```
 
-## Setup
+## Development
 
 ```sh
 uv sync
-podman compose up -d db
-cp .env.example .env
+docker compose up -d db
+cp .env.example .env            # set EMBEDDING_API_KEY before indexing
 uv run semsearch init-db
 uv run semsearch site add https://some.blog/ --sitemap auto --feed auto
-uv run semsearch worker
-```
-
-Set `EMBEDDING_API_KEY` in `.env` before indexing.
-
-Run the web UI:
-
-```sh
+uv run semsearch worker         # long running daemon for feed fetching
 uv run uvicorn semsearch.web.app:app --reload
 ```
 
-Run checks:
+Checks: `uv run pytest`, `uv run ruff check`, `uv run ruff format --check`,
+`uv run pyright`.
 
-```sh
-uv run pytest
-uv run ruff check
-uv run ruff format --check
-uv run pyright
-```
-
-## CLI
+CLI commands:
 
 ```sh
 uv run semsearch site add https://example.blog --sitemap auto --feed auto
@@ -64,70 +55,40 @@ uv run semsearch status
 ```
 
 `site add` requires an RSS or Atom feed and optionally stores a sitemap for
-historical fallback. `site poll` immediately synchronizes one site. `worker` is
-the continuous process: it scatters sites across twelve-hour polling windows,
-uses conditional feed requests, and ingests discovered posts from a durable
-queue. Run it under a process supervisor in production.
-
-When a current feed contains only previously unseen URLs, historical discovery
-follows RFC 5005 links, then WordPress feed pagination when applicable, and
-finally the configured sitemap. A historical run stops and reports an error
-after 2,000 unique post URLs. Sites without any usable historical source are
-reported as potentially partial instead of being marked fully synchronized.
-
-Existing URLs are append-only and are skipped before page fetching or
-embedding. Transient page failures remain queued with bounded retry backoff;
-repeated permanent failures are retained and reported by `semsearch status`.
-
-Bulk-import the indieblog.page export with the standalone importer:
-
-```sh
-uv run python scripts/import_indieblog_feeds.py --dry-run
-uv run python scripts/import_indieblog_feeds.py
-```
-
-The importer selects one feed per normalized origin, skips already configured
-sites, and reports invalid, unreachable, and duplicate-origin feed rows.
-
-Search is available through the web page. The CLI is reserved for index and
-site administration.
-
-## Search pipeline status
-
-Current stages:
-
-1. compile search filters into bound SQL predicates
-2. embed the query once
-3. run dense and PostgreSQL full-text retrievers concurrently
-4. build a deduplicated candidate pool and run optional rerankers
-5. fuse retriever and reranker runs with reciprocal rank fusion (RRF)
-6. keep the best chunk per page and render RRF plus native source scores
-
-## Configuration
-
-All settings come from environment variables or `.env`; see `.env.example`.
-Any OpenAI-compatible `/embeddings` endpoint works.
-
-Application logs are written to stderr as readable text. Set `LOG_LEVEL` to
-`DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`; the default is `INFO` for
-both the web app and CLI. Uvicorn continues to provide HTTP access logs.
-
-Changing `EMBEDDING_MODEL` or `EMBEDDING_DIM` invalidates the index:
-
-```sh
-podman compose down db
-podman volume rm semantic-search_pgdata
-podman compose up -d db
-uv run semsearch init-db
-```
+historical fallback. `worker` is the continuous process - it polls sites and
+ingests discovered posts from a durable queue; run it under a process
+supervisor in production. Bulk-import indieblog.page feeds with
+`scripts/import_indieblog_feeds.py` (`--dry-run` first).
 
 ## Deployment
 
 ```sh
 cp .env.example .env
-podman compose --profile deploy up -d --build
+docker compose --profile deploy up -d --build
+docker compose exec app /app/.venv/bin/semsearch init-db   # first run only
 ```
 
-The deploy profile starts the web app and continuous ingestion worker. The app
-listens on port 8000. For public deployment, change the Postgres password and
-put TLS in front of the app.
+Starts the web app (port 8000) and the continuous worker. For public
+deployment, set `POSTGRES_PASSWORD` (optionally `POSTGRES_USER` and
+`POSTGRES_DB`) in `.env` before the first start and put TLS in front of the
+app. Postgres itself is only reachable from containers and `127.0.0.1`.
+
+`EMBEDDING_API_BASE` must be reachable from inside the containers: a hosted API
+works as-is; for an embedding server on the host, use
+`http://host.docker.internal:<port>/v1`.
+
+Run one-off admin commands inside the app container:
+
+```sh
+docker compose exec app /app/.venv/bin/semsearch status
+docker compose exec app /app/.venv/bin/python scripts/import_indieblog_feeds.py --dry-run
+```
+
+The database defaults to a managed `pgdata` volume. To store it on a specific
+disk, set `PGDATA_DIR` in `.env` to an absolute host path (NVMe, mounted
+`noatime`); Compose bind-mounts it as the Postgres data directory. Changing it
+after the database exists points Postgres at a fresh location, so move the old
+data first or re-index.
+
+Changing `EMBEDDING_MODEL` or `EMBEDDING_DIM` invalidates the index - wipe and
+re-index: TODO
