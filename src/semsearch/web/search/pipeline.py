@@ -31,8 +31,8 @@ async def search(
     retrievers: Sequence[Retriever],
     rerankers: Sequence[Reranker] = (),
     fusion: Fusion = reciprocal_rank_fusion,
-    limit: int = 10,
-    fetch_k: int = 50,
+    limit: int = 32,
+    fetch_k: int = 64,
     filters: Sequence[SearchFilter] = (),
 ) -> list[Candidate]:
     query_embedding = await embed_query(query)

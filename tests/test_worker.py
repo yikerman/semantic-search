@@ -1,5 +1,6 @@
 import asyncio
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from types import SimpleNamespace
 from typing import Any, cast
 from uuid import uuid4
 
@@ -9,7 +10,14 @@ from semsearch.cli.ingest.fetch import FetchError
 from semsearch.cli.ingest.lease import LeaseLostError
 from semsearch.cli.ingest.models import IndexOutcome
 from semsearch.cli.ingest.pipeline import IngestError
-from semsearch.cli.ingest.worker import BusySites, process_one_job
+from semsearch.cli.ingest.worker import (
+    WORKER_LOCK_ID,
+    BusySites,
+    WorkerAlreadyRunningError,
+    advisory_lock,
+    process_one_job,
+    run_worker,
+)
 from semsearch.cli.models import CrawlJob
 
 
@@ -263,3 +271,169 @@ async def test_busy_site_is_released_when_ingest_fails(monkeypatch):
 
     assert outcome is not None and outcome.detail.startswith("dropped:")
     assert busy_sites.site_ids() == ()
+
+
+class LockCursor:
+    def __init__(self, acquired: bool) -> None:
+        self._acquired = acquired
+
+    async def fetchone(self):
+        return (self._acquired,)
+
+
+class LockConnection(AbstractAsyncContextManager):
+    def __init__(
+        self, *, acquired: bool = True, unlock_error: Exception | None = None
+    ) -> None:
+        self.acquired = acquired
+        self.unlock_error = unlock_error
+        self.statements: list[str] = []
+        self.commits = 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return None
+
+    async def execute(self, query, params=()):
+        self.statements.append(query)
+        if "pg_advisory_unlock" in query and self.unlock_error is not None:
+            raise self.unlock_error
+        return LockCursor(self.acquired)
+
+    async def commit(self):
+        self.commits += 1
+
+
+class LockPool:
+    def __init__(self, conn: LockConnection) -> None:
+        self._conn = conn
+
+    def connection(self):
+        return self._conn
+
+
+async def test_advisory_lock_acquires_then_releases():
+    conn = LockConnection()
+
+    async with advisory_lock(cast(Any, LockPool(conn)), 42):
+        assert any("pg_try_advisory_lock" in s for s in conn.statements)
+        assert not any("pg_advisory_unlock" in s for s in conn.statements)
+
+    assert any("pg_advisory_unlock" in s for s in conn.statements)
+    assert conn.commits == 2
+
+
+async def test_advisory_lock_raises_when_already_held():
+    conn = LockConnection(acquired=False)
+
+    with pytest.raises(WorkerAlreadyRunningError):
+        async with advisory_lock(cast(Any, LockPool(conn)), 42):
+            raise AssertionError("body must not run")
+
+    assert not any("pg_advisory_unlock" in s for s in conn.statements)
+
+
+async def test_advisory_lock_releases_when_body_raises():
+    conn = LockConnection()
+
+    with pytest.raises(ValueError, match="boom"):
+        async with advisory_lock(cast(Any, LockPool(conn)), 42):
+            raise ValueError("boom")
+
+    assert any("pg_advisory_unlock" in s for s in conn.statements)
+
+
+async def test_advisory_lock_swallows_unlock_failure():
+    conn = LockConnection(unlock_error=RuntimeError("connection lost"))
+
+    async with advisory_lock(cast(Any, LockPool(conn)), 42):
+        pass
+
+
+def _worker_settings() -> Any:
+    return cast(
+        Any,
+        SimpleNamespace(
+            site_poll_interval_seconds=3600,
+            site_poll_concurrency=1,
+            ingest_concurrency=1,
+        ),
+    )
+
+
+async def test_run_worker_holds_lock_around_supervision(monkeypatch):
+    events: list[tuple[str, int]] = []
+    loops_started = asyncio.Event()
+
+    @asynccontextmanager
+    async def lock(pool, lock_id):
+        events.append(("acquired", lock_id))
+        try:
+            yield
+        finally:
+            events.append(("released", lock_id))
+
+    async def scatter(conn, *, interval_seconds):
+        events.append(("scattered", interval_seconds))
+
+    async def claim_due_site(conn):
+        loops_started.set()
+        return None
+
+    async def claim_crawl_job(conn, *, site_id=None, exclude_site_ids=()):
+        return None
+
+    monkeypatch.setattr("semsearch.cli.ingest.worker.db.scatter_poll_schedule", scatter)
+    monkeypatch.setattr("semsearch.cli.ingest.worker.db.claim_due_site", claim_due_site)
+    monkeypatch.setattr(
+        "semsearch.cli.ingest.worker.db.claim_crawl_job", claim_crawl_job
+    )
+
+    task = asyncio.create_task(
+        run_worker(
+            cast(Any, FakePool()),
+            cast(Any, None),
+            cast(Any, None),
+            cast(Any, None),
+            _worker_settings(),
+            lock=lock,
+        )
+    )
+    await loops_started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert events == [
+        ("acquired", WORKER_LOCK_ID),
+        ("scattered", 3600),
+        ("released", WORKER_LOCK_ID),
+    ]
+
+
+async def test_run_worker_starts_nothing_when_lock_is_unavailable(monkeypatch):
+    scattered: list[int] = []
+
+    @asynccontextmanager
+    async def lock(pool, lock_id):
+        raise WorkerAlreadyRunningError("another semsearch worker is already running")
+        yield
+
+    async def scatter(conn, *, interval_seconds):
+        scattered.append(interval_seconds)
+
+    monkeypatch.setattr("semsearch.cli.ingest.worker.db.scatter_poll_schedule", scatter)
+
+    with pytest.raises(WorkerAlreadyRunningError):
+        await run_worker(
+            cast(Any, FakePool()),
+            cast(Any, None),
+            cast(Any, None),
+            cast(Any, None),
+            _worker_settings(),
+            lock=lock,
+        )
+
+    assert scattered == []

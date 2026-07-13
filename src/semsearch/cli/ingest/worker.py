@@ -1,7 +1,8 @@
 import asyncio
 import logging
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from functools import partial
 
 from psycopg_pool import AsyncConnectionPool
@@ -30,6 +31,33 @@ _ERROR_BACKOFF_SECONDS = 5
 
 class WorkerAlreadyRunningError(RuntimeError):
     pass
+
+
+type AdvisoryLock = Callable[
+    [AsyncConnectionPool, int], AbstractAsyncContextManager[None]
+]
+
+
+@asynccontextmanager
+async def advisory_lock(pool: AsyncConnectionPool, lock_id: int) -> AsyncIterator[None]:
+    # Advisory locks are session-scoped, so the acquiring connection stays
+    # checked out for the whole duration.
+    async with pool.connection() as conn:
+        cur = await conn.execute("SELECT pg_try_advisory_lock(%s)", (lock_id,))
+        row = await cur.fetchone()
+        if row is None or not row[0]:
+            raise WorkerAlreadyRunningError(
+                "another semsearch worker is already running"
+            )
+        await conn.commit()
+        try:
+            yield
+        finally:
+            try:
+                await conn.execute("SELECT pg_advisory_unlock(%s)", (lock_id,))
+                await conn.commit()
+            except Exception:
+                logger.warning("Failed to release worker advisory lock", exc_info=True)
 
 
 class BusySites:
@@ -63,45 +91,27 @@ async def run_worker(
     fetcher: Fetcher,
     chunker: Chunker,
     settings: Settings,
+    *,
+    lock: AdvisoryLock = advisory_lock,
 ) -> None:
-    async with pool.connection() as lock_conn:
-        cur = await lock_conn.execute(
-            "SELECT pg_try_advisory_lock(%s)", (WORKER_LOCK_ID,)
-        )
-        row = await cur.fetchone()
-        if row is None or not row[0]:
-            raise WorkerAlreadyRunningError(
-                "another semsearch worker is already running"
+    async with lock(pool, WORKER_LOCK_ID):
+        async with pool.connection() as conn, conn.transaction():
+            await db.scatter_poll_schedule(
+                conn,
+                interval_seconds=settings.site_poll_interval_seconds,
             )
-        await lock_conn.commit()
-        try:
-            async with pool.connection() as conn, conn.transaction():
-                await db.scatter_poll_schedule(
-                    conn,
-                    interval_seconds=settings.site_poll_interval_seconds,
+        logger.info("Worker started")
+        # Loops prefer sites no other loop is working so they spread
+        # across origins instead of queueing on one origin's politeness
+        # lock.
+        busy_sites = BusySites()
+        async with asyncio.TaskGroup() as tasks:
+            for _ in range(settings.site_poll_concurrency):
+                tasks.create_task(_poll_loop(pool, fetcher, settings))
+            for _ in range(settings.ingest_concurrency):
+                tasks.create_task(
+                    _ingest_loop(pool, embed_documents, fetcher, chunker, busy_sites)
                 )
-            logger.info("Worker started")
-            # Loops prefer sites no other loop is working so they spread
-            # across origins instead of queueing on one origin's politeness
-            # lock.
-            busy_sites = BusySites()
-            async with asyncio.TaskGroup() as tasks:
-                for _ in range(settings.site_poll_concurrency):
-                    tasks.create_task(_poll_loop(pool, fetcher, settings))
-                for _ in range(settings.ingest_concurrency):
-                    tasks.create_task(
-                        _ingest_loop(
-                            pool, embed_documents, fetcher, chunker, busy_sites
-                        )
-                    )
-        finally:
-            try:
-                await lock_conn.execute(
-                    "SELECT pg_advisory_unlock(%s)", (WORKER_LOCK_ID,)
-                )
-                await lock_conn.commit()
-            except Exception:
-                logger.warning("Failed to release worker advisory lock", exc_info=True)
 
 
 async def drain_site_jobs(

@@ -186,20 +186,7 @@ def test_poll_offsets_scatter_4000_sites_across_the_hour():
 
 
 def test_history_limit_error_reports_partial_sync():
-    site = Site(
-        1,
-        "https://example.com",
-        "https://example.com/sitemap.xml",
-        "https://example.com/feed.xml",
-        None,
-        None,
-        None,
-        None,
-        0,
-        None,
-        True,
-        None,
-    )
+    site = replace(_site(), feed_url="https://example.com/feed.xml")
 
     error = _history_limit(site, 2000)
 
@@ -340,18 +327,18 @@ async def test_wordpress_history_uses_paged_query_until_terminal_response(
 
 def _site() -> Site:
     return Site(
-        1,
-        "https://example.com",
-        "https://example.com/sitemap.xml",
-        "https://example.com/feed/",
-        None,
-        None,
-        None,
-        None,
-        0,
-        None,
-        True,
-        None,
+        id=1,
+        base_url="https://example.com",
+        sitemap_url="https://example.com/sitemap.xml",
+        feed_url="https://example.com/feed/",
+        last_polled_at=None,
+        next_poll_at=None,
+        feed_etag=None,
+        feed_last_modified=None,
+        poll_failures=0,
+        sync_error=None,
+        history_pending=True,
+        history_error=None,
     )
 
 

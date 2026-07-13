@@ -2,11 +2,12 @@ import importlib.resources
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import LiteralString, cast
+from typing import Any, LiteralString, cast
 from uuid import UUID, uuid4
 
 import psycopg
 from pgvector import HalfVector
+from psycopg.rows import dict_row
 
 from semsearch.cli.models import CrawlJob, Site
 from semsearch.share.config import Settings
@@ -20,6 +21,7 @@ class ChunkInsert:
     embedding: Sequence[float]
 
 
+# Rows are mapped to Site by column name; keep these names equal to Site's fields.
 SITE_COLUMNS = """
 sites.id, sites.base_url, sites.sitemap_url, sites.feed_url,
 sites.last_polled_at, sites.next_poll_at, sites.feed_etag,
@@ -49,7 +51,8 @@ async def upsert_site_config(
     feed_url: str,
     initial_poll_delay_seconds: int,
 ) -> Site:
-    cur = await conn.execute(
+    cur = conn.cursor(row_factory=dict_row)
+    await cur.execute(
         f"""
         INSERT INTO sites (base_url, sitemap_url, feed_url, next_poll_at)
         VALUES (%s, %s, %s, now() + make_interval(secs => %s))
@@ -96,23 +99,25 @@ async def upsert_site_config(
         """,
         (base_url, sitemap_url, feed_url, initial_poll_delay_seconds),
     )
-    return Site(*cast(tuple, await cur.fetchone()))
+    return Site(**cast(dict[str, Any], await cur.fetchone()))
 
 
 async def list_site_configs(conn: psycopg.AsyncConnection) -> list[Site]:
-    cur = await conn.execute(f"SELECT {SITE_COLUMNS} FROM sites ORDER BY base_url")
-    return [Site(*row) for row in await cur.fetchall()]
+    cur = conn.cursor(row_factory=dict_row)
+    await cur.execute(f"SELECT {SITE_COLUMNS} FROM sites ORDER BY base_url")
+    return [Site(**row) for row in await cur.fetchall()]
 
 
 async def find_site_config(
     conn: psycopg.AsyncConnection, *, base_url: str
 ) -> Site | None:
-    cur = await conn.execute(
+    cur = conn.cursor(row_factory=dict_row)
+    await cur.execute(
         f"SELECT {SITE_COLUMNS} FROM sites WHERE base_url = %s",
         (base_url,),
     )
     row = await cur.fetchone()
-    return None if row is None else Site(*row)
+    return None if row is None else Site(**row)
 
 
 async def known_urls(conn: psycopg.AsyncConnection, urls: Sequence[str]) -> set[str]:
@@ -261,7 +266,8 @@ async def claim_due_site(
     conn: psycopg.AsyncConnection, *, lease_seconds: int = 600
 ) -> tuple[Site, UUID] | None:
     token = uuid4()
-    cur = await conn.execute(
+    cur = conn.cursor(row_factory=dict_row)
+    await cur.execute(
         f"""
         WITH candidate AS (
             SELECT id
@@ -282,14 +288,18 @@ async def claim_due_site(
         (lease_seconds, token),
     )
     row = await cur.fetchone()
-    return None if row is None else (Site(*row[:-1]), cast(UUID, row[-1]))
+    if row is None:
+        return None
+    granted_token = cast(UUID, row.pop("poll_lease_token"))
+    return Site(**row), granted_token
 
 
 async def claim_site(
     conn: psycopg.AsyncConnection, *, site_id: int, lease_seconds: int = 600
 ) -> tuple[Site, UUID] | None:
     token = uuid4()
-    cur = await conn.execute(
+    cur = conn.cursor(row_factory=dict_row)
+    await cur.execute(
         f"""
         UPDATE sites
         SET poll_lease_until = now() + make_interval(secs => %s),
@@ -301,7 +311,10 @@ async def claim_site(
         (lease_seconds, token, site_id),
     )
     row = await cur.fetchone()
-    return None if row is None else (Site(*row[:-1]), cast(UUID, row[-1]))
+    if row is None:
+        return None
+    granted_token = cast(UUID, row.pop("poll_lease_token"))
+    return Site(**row), granted_token
 
 
 async def renew_poll_lease(
