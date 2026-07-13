@@ -282,13 +282,3 @@ td {
   white-space: nowrap;
   border: 0;
 }
-
-@media (max-width: 34rem) {
-  .search-query {
-    flex-direction: column;
-  }
-
-  .search-form button {
-    width: 100%;
-  }
-}
