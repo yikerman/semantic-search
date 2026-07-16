@@ -65,6 +65,32 @@ async def ping(conn: psycopg.AsyncConnection) -> None:
     await conn.execute("SELECT 1")
 
 
+async def list_available_languages(conn: psycopg.AsyncConnection) -> list[str]:
+    cur = await conn.execute(
+        """
+        SELECT DISTINCT language
+        FROM pages
+        WHERE language IS NOT NULL
+        ORDER BY language
+        """
+    )
+    languages: list[str] = []
+    for row in await cur.fetchall():
+        if len(row) != 1:
+            raise ValueError("invalid page language database row")
+        language = row[0]
+        if (
+            not isinstance(language, str)
+            or len(language) != 2
+            or not language.isascii()
+            or not language.isalpha()
+            or not language.islower()
+        ):
+            raise ValueError("invalid page language database row")
+        languages.append(language)
+    return languages
+
+
 async def fetch_page_chunks(
     conn: psycopg.AsyncConnection, *, page_ids: Sequence[int]
 ) -> dict[int, tuple[str, ...]]:

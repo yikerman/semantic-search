@@ -56,6 +56,7 @@ async def test_successful_ingest_stores_page_chunks_and_completes_job_atomically
 
     async def insert_page(conn, **kwargs):
         assert conn.in_transaction
+        assert kwargs["language"] == "en"
         writes.append("page")
         return 3
 
@@ -77,7 +78,7 @@ async def test_successful_ingest_stores_page_chunks_and_completes_job_atomically
     )
     monkeypatch.setattr(
         "semsearch.cli.ingest.pipeline.extract_page",
-        lambda html, url: ExtractedPage("Title", "body", None),
+        lambda html, url: ExtractedPage("Title", "body", None, "en"),
     )
 
     async def embed(texts: list[str]) -> list[list[float]]:
@@ -127,7 +128,7 @@ async def test_ingest_skips_when_page_inserted_concurrently(monkeypatch):
     )
     monkeypatch.setattr(
         "semsearch.cli.ingest.pipeline.extract_page",
-        lambda html, url: ExtractedPage("Title", "body", None),
+        lambda html, url: ExtractedPage("Title", "body", None, "en"),
     )
 
     async def embed(texts: list[str]) -> list[list[float]]:

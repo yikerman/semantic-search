@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS sites (
 
 CREATE INDEX IF NOT EXISTS sites_next_poll_idx ON sites (next_poll_at);
 
+-- a site has several to-crawl pages
 CREATE TABLE IF NOT EXISTS crawl_jobs (
     id bigserial PRIMARY KEY,
     site_id bigint NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS pages (
     url text UNIQUE NOT NULL,
     title text,
     published_at timestamptz,
+    language text,
     fetched_at timestamptz NOT NULL
 );
 
@@ -60,6 +62,10 @@ CREATE INDEX IF NOT EXISTS pages_site_idx ON pages (site_id);
 
 CREATE INDEX IF NOT EXISTS pages_recent_idx
     ON pages (fetched_at DESC, url);
+
+CREATE INDEX IF NOT EXISTS pages_language_idx
+    ON pages (language)
+    WHERE language IS NOT NULL;
 
 -- each chunk hold an embedding
 CREATE TABLE IF NOT EXISTS chunks (

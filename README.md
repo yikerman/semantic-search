@@ -44,6 +44,7 @@ Apply migrations to an existing development database from the repository root:
 docker compose exec -T db \
   sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
   < scripts/0000_a358487_add_status_indexes.sql
+uv run python scripts/0001_2bfa077_add_page_language.py
 ```
 
 ## Deployment
@@ -61,7 +62,16 @@ wrapping it in a transaction:
 docker compose exec -T db \
   sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
   < scripts/0000_a358487_add_status_indexes.sql
+docker compose build app worker
+docker compose run --rm app \
+  /app/.venv/bin/python scripts/0001_2bfa077_add_page_language.py
+docker compose --profile deploy up -d
+docker compose run --rm app \
+  /app/.venv/bin/python scripts/0001_2bfa077_add_page_language.py
 ```
+
+The language migration is online and resumable. Its second run catches pages
+that an older worker may have inserted during the first backfill.
 
 For an embedding server on the host, use
 `http://host.docker.internal:<port>/some-api-endpoint` in `.env`.

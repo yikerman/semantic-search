@@ -1,5 +1,6 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from functools import partial
 
 from psycopg import sql
 
@@ -11,6 +12,17 @@ class SqlPredicate:
 
 
 type SearchFilter = Callable[[str], SqlPredicate]
+
+
+def filter_by_language(language: str) -> SearchFilter:
+    return partial(_language_predicate, language=language)
+
+
+def _language_predicate(page_alias: str, *, language: str) -> SqlPredicate:
+    return SqlPredicate(
+        sql.SQL("{}.language = %s").format(sql.Identifier(page_alias)),
+        (language,),
+    )
 
 
 def compile_filters(

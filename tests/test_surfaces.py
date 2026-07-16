@@ -7,7 +7,13 @@ from typer.testing import CliRunner
 
 from semsearch.share.config import Settings
 from semsearch.share.status import IndexStats
-from semsearch.web.app import DisplayResult, create_app, prepare_display, templates
+from semsearch.web.app import (
+    DisplayResult,
+    create_app,
+    prepare_display,
+    prepare_language_options,
+    templates,
+)
 from semsearch.web.db import RecentActivity
 from semsearch.web.search.models import PageCandidate
 
@@ -41,6 +47,8 @@ def test_web_template_shows_scores_with_shared_semantic_structure():
         active_page="search",
         q="query",
         encourage_long_content=True,
+        lang="fr",
+        languages=["en", "fr"],
         error="Embedding service unavailable",
         results=[
             DisplayResult(
@@ -68,10 +76,18 @@ def test_web_template_shows_scores_with_shared_semantic_structure():
     assert '<form class="search-form" action="/" method="get" role="search">' in html
     assert '<label class="visually-hidden" for="query">' in html
     assert 'name="encourage_long_content" value="true"' in html
+    assert '<select id="language" name="lang">' in html
+    assert '<option value="fr" selected>fr</option>' in html
     assert "checked" in html
     assert '<p class="error" role="alert">' in html
     assert '<article class="result">' in html
     assert "<style" not in html
+
+
+def test_language_options_are_sorted_and_preserve_unknown_selection():
+    options = prepare_language_options(["fr", "en"], selected="zz")
+
+    assert options == ["en", "fr", "zz"]
 
 
 class FakeConnection(AbstractAsyncContextManager):

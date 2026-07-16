@@ -39,7 +39,8 @@ main a:visited {
 
 a:focus-visible,
 button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
   outline: 3px solid #8bc4cb;
   outline-offset: 2px;
 }
@@ -127,13 +128,31 @@ button:hover {
   background: #0f525b;
 }
 
-.search-option {
+.search-options {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.search-option,
+.search-language {
   display: flex;
   align-items: center;
   width: fit-content;
   gap: 0.45rem;
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.search-language select {
+  min-height: 2rem;
+  padding: 0.25rem 1.8rem 0.25rem 0.5rem;
+  border: 1px solid #aebabc;
+  border-radius: 4px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
 }
 
 .search-option input {

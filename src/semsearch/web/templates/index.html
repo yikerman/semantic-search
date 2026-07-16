@@ -7,10 +7,21 @@
     <input id="query" type="search" name="q" value="{{ q }}" autofocus>
     <button type="submit">Search</button>
   </div>
-  <label class="search-option">
-    <input type="checkbox" name="encourage_long_content" value="true" {% if encourage_long_content %}checked{% endif %}>
-    <span>Encourage long content</span>
-  </label>
+  <div class="search-options">
+    <label class="search-language" for="language">
+      <span>Language</span>
+      <select id="language" name="lang">
+        <option value="">Any language</option>
+        {% for language in languages %}
+        <option value="{{ language }}" {% if language == lang %}selected{% endif %}>{{ language }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="search-option">
+      <input type="checkbox" name="encourage_long_content" value="true" {% if encourage_long_content %}checked{% endif %}>
+      <span>Encourage long content</span>
+    </label>
+  </div>
 </form>
 
 {% if error %}

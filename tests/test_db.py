@@ -11,6 +11,7 @@ from semsearch.web.db import (
     fetch_bm25_candidate_rows,
     fetch_dense_candidate_rows,
     fetch_page_chunks,
+    list_available_languages,
     list_recent_activity,
 )
 from semsearch.web.search.filters import SqlPredicate
@@ -64,9 +65,33 @@ def test_schema_and_migration_index_recent_activity():
     assert "DROP INDEX CONCURRENTLY IF EXISTS crawl_jobs_failed_idx" in migration
 
 
+def test_schema_adds_page_language_metadata():
+    schema = load_schema_sql(Settings(embedding_model="test-model", embedding_dim=2))
+
+    assert "language text" in schema
+    assert "pages_language_idx" in schema
+    assert "WHERE language IS NOT NULL" in schema
+
+
 class EmptyCursor:
     async def fetchall(self):
         return []
+
+
+class LanguageCursor:
+    async def fetchall(self):
+        return [("en",), ("fr",)]
+
+
+class LanguageConnection:
+    async def execute(self, query):
+        return LanguageCursor()
+
+
+async def test_available_languages_are_read_from_page_metadata():
+    languages = await list_available_languages(cast(Any, LanguageConnection()))
+
+    assert languages == ["en", "fr"]
 
 
 class DenseConnection:

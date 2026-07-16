@@ -455,6 +455,7 @@ async def insert_page(
     url: str,
     title: str | None,
     published_at: datetime | None,
+    language: str,
 ) -> int | None:
     """Insert a new page, returning its id, or ``None`` if the URL already exists.
 
@@ -464,12 +465,13 @@ async def insert_page(
     """
     cur = await conn.execute(
         """
-        INSERT INTO pages (site_id, url, title, published_at, fetched_at)
-        VALUES (%s, %s, %s, %s, now())
+        INSERT INTO pages
+            (site_id, url, title, published_at, language, fetched_at)
+        VALUES (%s, %s, %s, %s, %s, now())
         ON CONFLICT (url) DO NOTHING
         RETURNING id
         """,
-        (site_id, url, title, published_at),
+        (site_id, url, title, published_at, language),
     )
     row = await cur.fetchone()
     return None if row is None else row[0]
@@ -495,7 +497,7 @@ async def replace_page_chunks(
                     chunk.chunk_index,
                     chunk.content,
                     chunk.char_count,
-                    HalfVector(chunk.embedding),
+                    HalfVector(list(chunk.embedding)),
                 )
                 for chunk in chunks
             ],

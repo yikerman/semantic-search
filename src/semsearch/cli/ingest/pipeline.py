@@ -62,6 +62,7 @@ async def ingest_job(
             url=job.url,
             title=page.title,
             published_at=page.published_at,
+            language=page.language,
         )
         if page_id is None:
             # Another writer inserted this URL between the check above and now;

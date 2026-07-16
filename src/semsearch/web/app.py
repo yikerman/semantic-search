@@ -5,8 +5,9 @@ from functools import partial
 import logging
 from pathlib import Path
 from time import perf_counter
+from typing import Annotated
 
-from fastapi import FastAPI, Request, status as http_status
+from fastapi import FastAPI, Query, Request, status as http_status
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -16,11 +17,12 @@ from semsearch.share.db import create_pool
 from semsearch.share.embeddings import EmbeddingError, create_embeddings
 from semsearch.share.logging import configure_logging
 from semsearch.share.status import fetch_index_stats
-from semsearch.web.db import list_recent_activity, ping
+from semsearch.web.db import list_available_languages, list_recent_activity, ping
 from semsearch.web.search.bm25 import retrieve_bm25
 from semsearch.web.search.dense import retrieve_dense
 from semsearch.web.search.models import PageCandidate
 from semsearch.web.search.pipeline import rerank_by_length, search
+from semsearch.web.search.filters import filter_by_language
 
 # Configure at import time: uvicorn loads this module before it logs its own
 # startup lines, so even those render through our handler.
@@ -38,6 +40,15 @@ class DisplayResult:
     snippet: str
     is_truncated: bool
     scores: Mapping[str, float]
+
+
+def prepare_language_options(
+    languages: Sequence[str], *, selected: str | None
+) -> list[str]:
+    codes = set(languages)
+    if selected:
+        codes.add(selected)
+    return sorted(codes)
 
 
 def prepare_display(results: Sequence[PageCandidate]) -> list[DisplayResult]:
@@ -82,20 +93,32 @@ def create_app() -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def index(
-        request: Request, q: str = "", encourage_long_content: bool = False
+        request: Request,
+        q: str = "",
+        encourage_long_content: bool = False,
+        lang: Annotated[str | None, Query(pattern=r"^[A-Za-z]{2}$")] = None,
     ):
         results = None
         error = None
         status_code = http_status.HTTP_200_OK
         query = q.strip()
+        selected_language = lang.lower() if lang else None
+        async with request.app.state.pool.connection() as conn:
+            available_languages = await list_available_languages(conn)
         if query:
             rerankers = (rerank_by_length,) if encourage_long_content else ()
+            filters = (
+                (filter_by_language(selected_language),)
+                if selected_language is not None
+                else ()
+            )
             run_search = partial(
                 search,
                 pool=request.app.state.pool,
                 embed_query=request.app.state.embed_query,
                 retrievers=(retrieve_dense, retrieve_bm25),
                 rerankers=rerankers,
+                filters=filters,
             )
             started_at = perf_counter()
             try:
@@ -120,6 +143,10 @@ def create_app() -> FastAPI:
                 "active_page": "search",
                 "q": q,
                 "encourage_long_content": encourage_long_content,
+                "lang": selected_language or "",
+                "languages": prepare_language_options(
+                    available_languages, selected=selected_language
+                ),
                 "results": results,
                 "error": error,
             },
