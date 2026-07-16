@@ -20,7 +20,7 @@ class Site:
 
 
 @dataclass(frozen=True, slots=True)
-class CrawlJob:
+class CrawlAttempt:
     id: int
     site_id: int
     url: str

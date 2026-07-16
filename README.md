@@ -32,7 +32,7 @@ cp .env.example .env  # set EMBEDDING_API_KEY before indexing
 uv run semsearch init-db
 # manually add a site. note that feed is mandatory
 uv run semsearch site add https://some.blog/ --sitemap auto --feed auto
-uv run semsearch worker &  # long running daemon for feed fetching
+uv run semsearch daemon &  # long-running polling and ingestion process
 uv run uvicorn semsearch.web.app:app --reload
 ```
 
@@ -62,7 +62,7 @@ wrapping it in a transaction:
 docker compose exec -T db \
   sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
   < scripts/0000_a358487_add_status_indexes.sql
-docker compose build app worker
+docker compose build app daemon
 docker compose run --rm app \
   /app/.venv/bin/python scripts/0001_2bfa077_add_page_language.py
 docker compose --profile deploy up -d
@@ -71,7 +71,12 @@ docker compose run --rm app \
 ```
 
 The language migration is online and resumable. Its second run catches pages
-that an older worker may have inserted during the first backfill.
+that an older daemon may have inserted during the first backfill.
+
+When upgrading from a release with the old `worker` Compose service, stop or
+remove that container before starting `daemon` (or deploy with
+`--remove-orphans`). Both names use the same advisory lock id, so they cannot
+process the queue concurrently during the transition.
 
 For an embedding server on the host, use
 `http://host.docker.internal:<port>/some-api-endpoint` in `.env`.

@@ -1,5 +1,4 @@
 import asyncio
-from collections import Counter
 from collections.abc import AsyncIterator, Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -13,24 +12,12 @@ import typer
 from psycopg_pool import AsyncConnectionPool
 
 from semsearch.cli import db
+from semsearch.cli.daemon import DaemonAlreadyRunningError, run_daemon
 from semsearch.cli.ingest.chunk import Chunker, char_chunks
 from semsearch.cli.ingest.feed import FeedError
 from semsearch.cli.ingest.fetch import FetchError, Fetcher, create_fetcher
-from semsearch.cli.ingest.lease import LeaseLostError
-from semsearch.cli.ingest.pipeline import IndexOutcome, IngestError
-from semsearch.cli.ingest.worker import (
-    WorkerAlreadyRunningError,
-    drain_site_jobs,
-    run_worker,
-)
 from semsearch.cli.models import Site
-from semsearch.cli.sites import (
-    PollOutcome,
-    SiteError,
-    add_site,
-    list_sites,
-    poll_site,
-)
+from semsearch.cli.sites import SiteError, add_site, list_sites
 from semsearch.share.config import Settings, get_settings
 from semsearch.share.db import create_pool
 from semsearch.share.embeddings import (
@@ -80,13 +67,11 @@ def run(coro: Coroutine[Any, Any, Any]) -> Any:
     try:
         return asyncio.run(coro)
     except (
-        IngestError,
         FetchError,
         FeedError,
         EmbeddingError,
         SiteError,
-        WorkerAlreadyRunningError,
-        LeaseLostError,
+        DaemonAlreadyRunningError,
     ) as exc:
         typer.secho(f"error: {exc}", fg="red", err=True)
         raise typer.Exit(1) from exc
@@ -163,41 +148,13 @@ def site_list() -> None:
         _echo_site(record)
 
 
-@site_app.command("poll")
-def site_poll_command(site: str) -> None:
-    """Synchronize one configured site now."""
-
-    async def _poll() -> tuple[PollOutcome, list[IndexOutcome]]:
-        async with open_services() as services:
-            outcome = await poll_site(
-                services.pool,
-                services.fetcher,
-                services.settings,
-                site,
-            )
-            indexed = await drain_site_jobs(
-                services.pool,
-                services.embed_documents,
-                services.fetcher,
-                services.chunker,
-                outcome.site.id,
-                _echo_outcome,
-            )
-            return outcome, indexed
-
-    outcome, indexed = run(_poll())
-    _echo_poll_summary(outcome, indexed)
-    if outcome.error:
-        raise typer.Exit(1)
-
-
 @app.command()
-def worker() -> None:
+def daemon() -> None:
     """Continuously poll sites and ingest discovered posts."""
 
-    async def _worker() -> None:
+    async def _daemon() -> None:
         async with open_services() as services:
-            await run_worker(
+            await run_daemon(
                 services.pool,
                 services.embed_documents,
                 services.fetcher,
@@ -205,7 +162,7 @@ def worker() -> None:
                 services.settings,
             )
 
-    run(_worker())
+    run(_daemon())
 
 
 @app.command()
@@ -249,17 +206,6 @@ def _redact_dsn(url: str) -> str:
     return f"{parts.scheme}://{parts.hostname}{port}/{name}"
 
 
-def _echo_outcome(outcome: IndexOutcome) -> None:
-    detail = outcome.detail
-    if outcome.status == "indexed":
-        detail = f"{outcome.chunk_count} chunks"
-    color = {"indexed": "green", "error": "red"}.get(outcome.status)
-    typer.secho(
-        f"[{outcome.status}] {outcome.url}" + (f" - {detail}" if detail else ""),
-        fg=color,
-    )
-
-
 def _echo_site(site: Site) -> None:
     typer.echo(site.base_url)
     typer.echo(f"  sitemap: {site.sitemap_url or '-'}")
@@ -272,20 +218,6 @@ def _echo_site(site: Site) -> None:
         typer.echo(f"  history error: {site.history_error}")
     if site.sync_error:
         typer.echo(f"  sync error: {site.sync_error}")
-
-
-def _echo_poll_summary(poll: PollOutcome, outcomes: list[IndexOutcome]) -> None:
-    if poll.not_modified:
-        typer.echo(f"\n{poll.site.base_url}: feed unchanged")
-        return
-    counts = Counter(outcome.status for outcome in outcomes)
-    summary = ", ".join(f"{key}: {value}" for key, value in counts.most_common())
-    typer.echo(
-        f"\n{poll.site.base_url}: queued {poll.discovered} URLs"
-        + (f"; {summary}" if summary else "")
-    )
-    if poll.error:
-        typer.secho(f"error: {poll.error}", fg="red", err=True)
 
 
 def main() -> None:

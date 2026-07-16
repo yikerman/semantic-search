@@ -86,44 +86,6 @@ async def list_sites(pool: AsyncConnectionPool) -> list[Site]:
         return await db.list_site_configs(conn)
 
 
-async def get_site(pool: AsyncConnectionPool, site: str) -> Site:
-    try:
-        base_url = normalize_origin(site)
-    except ValueError as exc:
-        raise SiteError(str(exc)) from exc
-    async with pool.connection() as conn:
-        row = await db.find_site_config(conn, base_url=base_url)
-    if row is None:
-        raise SiteError(f"Unknown feed-backed site: {base_url}")
-    return row
-
-
-async def poll_site(
-    pool: AsyncConnectionPool,
-    fetcher: Fetcher,
-    settings: Settings,
-    site: str,
-) -> PollOutcome:
-    record = await get_site(pool, site)
-    async with pool.connection() as conn, conn.transaction():
-        claimed = await db.claim_site(conn, site_id=record.id)
-    if claimed is None:
-        raise SiteError(f"Site is already being polled: {record.base_url}")
-    record, lease_token = claimed
-    try:
-        return await poll_site_record(pool, fetcher, settings, record, lease_token)
-    except Exception as exc:
-        async with pool.connection() as conn, conn.transaction():
-            await db.mark_poll_failed(
-                conn,
-                site_id=record.id,
-                lease_token=lease_token,
-                error=str(exc),
-                interval_seconds=settings.site_poll_interval_seconds,
-            )
-        raise
-
-
 async def poll_site_record(
     pool: AsyncConnectionPool,
     fetcher: Fetcher,

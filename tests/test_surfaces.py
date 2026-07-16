@@ -27,7 +27,7 @@ def test_cli_is_admin_only():
     assert "site" in result.stdout
 
 
-def test_removed_bulk_and_index_commands_are_not_exposed():
+def test_removed_commands_are_not_exposed_and_daemon_is_canonical():
     runner = CliRunner()
 
     site_help = runner.invoke(cli_module.app, ["site", "--help"])
@@ -36,9 +36,9 @@ def test_removed_bulk_and_index_commands_are_not_exposed():
 
     assert site_help.exit_code == 0
     assert "index" not in site_help.stdout
-    assert "--all" not in poll_help.stdout
-    assert "--force" not in poll_help.stdout
-    assert "worker" in root_help.stdout
+    assert poll_help.exit_code != 0
+    assert "daemon" in root_help.stdout
+    assert "worker" not in root_help.stdout
 
 
 def test_web_template_shows_scores_with_shared_semantic_structure():

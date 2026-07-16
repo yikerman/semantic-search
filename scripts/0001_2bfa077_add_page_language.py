@@ -149,7 +149,7 @@ def run_migration(database_url: str, *, batch_size: int) -> Counter[str]:
             if remaining is not None and remaining[0]:
                 logger.warning(
                     "%d pages still have no language; rerun after deploying the "
-                    "updated worker",
+                    "updated daemon",
                     remaining[0],
                 )
             return counts

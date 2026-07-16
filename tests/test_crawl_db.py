@@ -1,5 +1,8 @@
+from contextlib import AbstractAsyncContextManager
 from typing import Any, cast
 from uuid import UUID, uuid4
+
+import pytest
 
 from semsearch.cli import db
 
@@ -43,7 +46,17 @@ async def test_claim_crawl_job_can_exclude_sites():
 
     assert job is not None
     assert "site_id != ALL(%s::bigint[])" in conn.query
-    assert conn.params[2] == [4, 9]
+    assert conn.params[0] == [4, 9]
+
+
+class InvalidClaimConnection:
+    async def execute(self, query, params):
+        return Cursor((1, 2, "https://example.com/post", "feed", -1, params[-1]))
+
+
+async def test_claim_crawl_job_validates_database_row():
+    with pytest.raises(ValueError, match="invalid crawl attempt database row"):
+        await db.claim_crawl_job(cast(Any, InvalidClaimConnection()))
 
 
 class RecordingConnection:
@@ -55,21 +68,73 @@ class RecordingConnection:
         return Cursor()
 
 
-async def test_job_state_updates_are_fenced_by_lease_token():
+async def test_job_state_updates_require_a_live_lease_and_report_ownership():
     conn = RecordingConnection()
     token = uuid4()
 
-    await db.retry_crawl_job(
+    retried = await db.retry_crawl_job(
         cast(Any, conn),
         job_id=7,
         lease_token=token,
         error="temporary",
         delay_seconds=300,
     )
-    await db.fail_crawl_job(
+    failed = await db.fail_crawl_job(
         cast(Any, conn), job_id=8, lease_token=token, error="permanent"
     )
-    await db.complete_existing_job(cast(Any, conn), job_id=9, lease_token=token)
+    completed = await db.complete_crawl_job(
+        cast(Any, conn), job_id=9, lease_token=token
+    )
+    renewed = await db.renew_crawl_lease(cast(Any, conn), job_id=10, lease_token=token)
 
     assert all("lease_token = %s" in query for query, _ in conn.calls)
+    assert all("lease_until >= now()" in query for query, _ in conn.calls)
     assert all(params[-1] == token for _, params in conn.calls)
+    assert retried and failed and completed and renewed
+
+
+async def test_job_state_update_reports_lost_lease():
+    class LostConnection:
+        async def execute(self, query, params):
+            return Cursor(rowcount=0)
+
+    assert not await db.complete_crawl_job(
+        cast(Any, LostConnection()), job_id=9, lease_token=uuid4()
+    )
+
+
+class ChunkCursor(AbstractAsyncContextManager):
+    def __init__(self) -> None:
+        self.rows = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return None
+
+    async def executemany(self, query, rows):
+        self.rows = rows
+
+
+class ChunkConnection:
+    def __init__(self) -> None:
+        self.cur = ChunkCursor()
+
+    def cursor(self):
+        return self.cur
+
+    async def execute(self, query, params):
+        raise AssertionError("append-only chunk insertion must not delete")
+
+
+async def test_insert_page_chunks_never_replaces_existing_chunks():
+    conn = ChunkConnection()
+
+    await db.insert_page_chunks(
+        cast(Any, conn),
+        page_id=3,
+        chunks=[db.ChunkInsert(0, "content", 7, (1.0, 0.0))],
+    )
+
+    assert len(conn.cur.rows) == 1

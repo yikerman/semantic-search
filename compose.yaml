@@ -35,13 +35,13 @@ services:
     ports:
       - "8000:8000"
 
-  worker:
+  daemon:
     restart: unless-stopped
     build:
       context: .
       dockerfile: Containerfile
     profiles: ["deploy"]
-    command: ["/app/.venv/bin/semsearch", "worker"]
+    command: ["/app/.venv/bin/semsearch", "daemon"]
     env_file: .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-semsearch}:${POSTGRES_PASSWORD:-semsearch}@db:5432/${POSTGRES_DB:-semsearch}

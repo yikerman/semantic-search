@@ -63,7 +63,7 @@ URL is page identity. Existing URLs are append-only and skipped.
 
 Configured sites use normalized origins as human-readable ids and surrogate
 `sites.id` values for foreign keys. Sitemap is optional; feed-only sites are
-indexed by `site poll`. The continuous `worker` scatters polling, discovers
+indexed by the continuous `daemon`, which scatters polling and discovers
 current and historical URLs into a durable queue, and ingests queued pages with
 bounded concurrency and retry backoff; concurrent ingest loops prefer sites no
 other loop is working so fetches spread across origins. When a feed shows only
@@ -91,7 +91,7 @@ podman compose up -d db
 cp .env.example .env
 uv run semsearch init-db
 uv run semsearch site add https://some.blog/ --sitemap auto --feed auto
-uv run semsearch worker
+uv run semsearch daemon
 uv run uvicorn semsearch.web.app:app --reload
 uv run pytest
 uv run ruff check

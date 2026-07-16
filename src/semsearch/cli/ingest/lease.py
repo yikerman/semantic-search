@@ -25,7 +25,7 @@ async def run_with_lease(
             # A raised renew is a transient database hiccup, not proof the lease
             # is gone; the lease still has most of its duration left, so log and
             # retry on the next tick. Only a clean False (our token no longer
-            # owns the row) means another worker took over.
+            # owns the row) means another claimant took over.
             try:
                 still_ours = await renew()
             except Exception:

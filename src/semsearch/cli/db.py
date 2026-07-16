@@ -9,7 +9,7 @@ import psycopg
 from pgvector import HalfVector
 from psycopg.rows import dict_row
 
-from semsearch.cli.models import CrawlJob, Site
+from semsearch.cli.models import CrawlAttempt, Site
 from semsearch.share.config import Settings
 
 
@@ -106,18 +106,6 @@ async def list_site_configs(conn: psycopg.AsyncConnection) -> list[Site]:
     cur = conn.cursor(row_factory=dict_row)
     await cur.execute(f"SELECT {SITE_COLUMNS} FROM sites ORDER BY base_url")
     return [Site(**row) for row in await cur.fetchall()]
-
-
-async def find_site_config(
-    conn: psycopg.AsyncConnection, *, base_url: str
-) -> Site | None:
-    cur = conn.cursor(row_factory=dict_row)
-    await cur.execute(
-        f"SELECT {SITE_COLUMNS} FROM sites WHERE base_url = %s",
-        (base_url,),
-    )
-    row = await cur.fetchone()
-    return None if row is None else Site(**row)
 
 
 async def known_urls(conn: psycopg.AsyncConnection, urls: Sequence[str]) -> set[str]:
@@ -294,29 +282,6 @@ async def claim_due_site(
     return Site(**row), granted_token
 
 
-async def claim_site(
-    conn: psycopg.AsyncConnection, *, site_id: int, lease_seconds: int = 600
-) -> tuple[Site, UUID] | None:
-    token = uuid4()
-    cur = conn.cursor(row_factory=dict_row)
-    await cur.execute(
-        f"""
-        UPDATE sites
-        SET poll_lease_until = now() + make_interval(secs => %s),
-            poll_lease_token = %s
-        WHERE id = %s
-          AND (poll_lease_until IS NULL OR poll_lease_until < now())
-        RETURNING {SITE_COLUMNS}, sites.poll_lease_token
-        """,
-        (lease_seconds, token, site_id),
-    )
-    row = await cur.fetchone()
-    if row is None:
-        return None
-    granted_token = cast(UUID, row.pop("poll_lease_token"))
-    return Site(**row), granted_token
-
-
 async def renew_poll_lease(
     conn: psycopg.AsyncConnection,
     *,
@@ -338,10 +303,9 @@ async def renew_poll_lease(
 async def claim_crawl_job(
     conn: psycopg.AsyncConnection,
     *,
-    site_id: int | None = None,
     exclude_site_ids: Sequence[int] = (),
     lease_seconds: int = 600,
-) -> CrawlJob | None:
+) -> CrawlAttempt | None:
     token = uuid4()
     cur = await conn.execute(
         """
@@ -351,7 +315,6 @@ async def claim_crawl_job(
             WHERE next_attempt_at IS NOT NULL
               AND next_attempt_at <= now()
               AND (lease_until IS NULL OR lease_until < now())
-              AND (%s::bigint IS NULL OR site_id = %s::bigint)
               AND site_id != ALL(%s::bigint[])
             ORDER BY next_attempt_at, id
             FOR UPDATE SKIP LOCKED
@@ -366,10 +329,30 @@ async def claim_crawl_job(
                   crawl_jobs.source, crawl_jobs.attempt_count,
                   crawl_jobs.lease_token
         """,
-        (site_id, site_id, list(exclude_site_ids), lease_seconds, token),
+        (list(exclude_site_ids), lease_seconds, token),
     )
     row = await cur.fetchone()
-    return None if row is None else CrawlJob(*row)
+    return None if row is None else _crawl_attempt_from_row(row)
+
+
+def _crawl_attempt_from_row(row: object) -> CrawlAttempt:
+    if not isinstance(row, Sequence) or isinstance(row, (str, bytes)) or len(row) != 6:
+        raise ValueError("invalid crawl attempt database row")
+    job_id, site_id, url, source, attempt_count, lease_token = row
+    if (
+        not isinstance(job_id, int)
+        or isinstance(job_id, bool)
+        or not isinstance(site_id, int)
+        or isinstance(site_id, bool)
+        or not isinstance(url, str)
+        or not isinstance(source, str)
+        or not isinstance(attempt_count, int)
+        or isinstance(attempt_count, bool)
+        or attempt_count < 0
+        or not isinstance(lease_token, UUID)
+    ):
+        raise ValueError("invalid crawl attempt database row")
+    return CrawlAttempt(job_id, site_id, url, source, attempt_count, lease_token)
 
 
 async def retry_crawl_job(
@@ -379,8 +362,8 @@ async def retry_crawl_job(
     lease_token: UUID,
     error: str,
     delay_seconds: int,
-) -> None:
-    await conn.execute(
+) -> bool:
+    cur = await conn.execute(
         """
         UPDATE crawl_jobs
         SET attempt_count = attempt_count + 1,
@@ -388,10 +371,11 @@ async def retry_crawl_job(
             lease_until = NULL,
             lease_token = NULL,
             last_error = %s
-        WHERE id = %s AND lease_token = %s
+        WHERE id = %s AND lease_token = %s AND lease_until >= now()
         """,
         (delay_seconds, error, job_id, lease_token),
     )
+    return cur.rowcount == 1
 
 
 async def fail_crawl_job(
@@ -400,8 +384,8 @@ async def fail_crawl_job(
     job_id: int,
     lease_token: UUID,
     error: str,
-) -> None:
-    await conn.execute(
+) -> bool:
+    cur = await conn.execute(
         """
         UPDATE crawl_jobs
         SET attempt_count = attempt_count + 1,
@@ -410,10 +394,11 @@ async def fail_crawl_job(
             lease_token = NULL,
             last_error = %s,
             failed_at = now()
-        WHERE id = %s AND lease_token = %s
+        WHERE id = %s AND lease_token = %s AND lease_until >= now()
         """,
         (error, job_id, lease_token),
     )
+    return cur.rowcount == 1
 
 
 async def renew_crawl_lease(
@@ -427,7 +412,7 @@ async def renew_crawl_lease(
         """
         UPDATE crawl_jobs
         SET lease_until = now() + make_interval(secs => %s)
-        WHERE id = %s AND lease_token = %s
+        WHERE id = %s AND lease_token = %s AND lease_until >= now()
         """,
         (lease_seconds, job_id, lease_token),
     )
@@ -439,13 +424,17 @@ async def page_exists(conn: psycopg.AsyncConnection, *, url: str) -> bool:
     return await cur.fetchone() is not None
 
 
-async def complete_existing_job(
+async def complete_crawl_job(
     conn: psycopg.AsyncConnection, *, job_id: int, lease_token: UUID
-) -> None:
-    await conn.execute(
-        "DELETE FROM crawl_jobs WHERE id = %s AND lease_token = %s",
+) -> bool:
+    cur = await conn.execute(
+        """
+        DELETE FROM crawl_jobs
+        WHERE id = %s AND lease_token = %s AND lease_until >= now()
+        """,
         (job_id, lease_token),
     )
+    return cur.rowcount == 1
 
 
 async def insert_page(
@@ -477,13 +466,12 @@ async def insert_page(
     return None if row is None else row[0]
 
 
-async def replace_page_chunks(
+async def insert_page_chunks(
     conn: psycopg.AsyncConnection,
     *,
     page_id: int,
     chunks: Iterable[ChunkInsert],
 ) -> None:
-    await conn.execute("DELETE FROM chunks WHERE page_id = %s", (page_id,))
     async with conn.cursor() as cur:
         await cur.executemany(
             """
