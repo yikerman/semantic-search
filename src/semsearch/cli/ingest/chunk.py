@@ -1,7 +1,14 @@
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 
-from semsearch.cli.ingest.models import Chunk
+
+@dataclass(frozen=True, slots=True)
+class Chunk:
+    chunk_index: int
+    content: str
+    char_count: int
+
 
 _WORD = re.compile(r"\S+\s*")
 

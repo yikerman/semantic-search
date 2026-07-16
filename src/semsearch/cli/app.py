@@ -17,8 +17,7 @@ from semsearch.cli.ingest.chunk import Chunker, char_chunks
 from semsearch.cli.ingest.feed import FeedError
 from semsearch.cli.ingest.fetch import FetchError, Fetcher, create_fetcher
 from semsearch.cli.ingest.lease import LeaseLostError
-from semsearch.cli.ingest.models import IndexOutcome
-from semsearch.cli.ingest.pipeline import IngestError
+from semsearch.cli.ingest.pipeline import IndexOutcome, IngestError
 from semsearch.cli.ingest.worker import (
     WorkerAlreadyRunningError,
     drain_site_jobs,

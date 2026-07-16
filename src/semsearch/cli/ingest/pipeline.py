@@ -1,15 +1,26 @@
 import asyncio
+from dataclasses import dataclass
+from typing import Literal
+
+from psycopg_pool import AsyncConnectionPool
 
 from semsearch.cli import db
 from semsearch.cli.ingest.chunk import Chunker
 from semsearch.cli.ingest.extract import extract_page
 from semsearch.cli.ingest.fetch import Fetcher
-from semsearch.cli.ingest.models import IndexOutcome
 from semsearch.cli.models import CrawlJob
 from semsearch.cli.url import same_site
 from semsearch.share.embeddings import EmbedDocuments
 
-from psycopg_pool import AsyncConnectionPool
+IndexStatus = Literal["indexed", "skipped", "error"]
+
+
+@dataclass(slots=True)
+class IndexOutcome:
+    url: str
+    status: IndexStatus
+    detail: str = ""
+    chunk_count: int = 0
 
 
 class IngestError(RuntimeError):

@@ -5,20 +5,21 @@ from psycopg_pool import AsyncConnectionPool
 from semsearch.share.embeddings import EmbedQuery
 from semsearch.share.util import map_concurrently
 from semsearch.web import db
-from semsearch.web.search.base import (
-    Fusion,
-    RankedRun,
-    Reranker,
-    RetrievalRequest,
-    Retriever,
-    SearchFilter,
-)
+from semsearch.web.search.filters import SearchFilter
 from semsearch.web.search.fusion import (
     reciprocal_rank_fusion,
     union_chunk_candidates,
     union_page_candidates,
 )
-from semsearch.web.search.models import ChunkCandidate, PageCandidate
+from semsearch.web.search.models import (
+    ChunkCandidate,
+    Fusion,
+    PageCandidate,
+    RankedRun,
+    Reranker,
+    RetrievalRequest,
+    Retriever,
+)
 
 
 def _suffix_prefix_overlap(left: str, right: str) -> int:

@@ -5,12 +5,17 @@ from typing import Any, cast
 import pytest
 
 from semsearch.web import db
-from semsearch.web.search.base import RankedRun, RetrievalRequest, Retriever
 from semsearch.web.search.fusion import (
     reciprocal_rank_fusion,
     union_chunk_candidates,
 )
-from semsearch.web.search.models import ChunkCandidate, PageCandidate
+from semsearch.web.search.models import (
+    ChunkCandidate,
+    PageCandidate,
+    RankedRun,
+    RetrievalRequest,
+    Retriever,
+)
 from semsearch.web.search.pipeline import (
     aggregate_page_run,
     compose_chunks,

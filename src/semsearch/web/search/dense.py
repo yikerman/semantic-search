@@ -1,9 +1,8 @@
 from psycopg_pool import AsyncConnectionPool
 
 from semsearch.web import db
-from semsearch.web.search.base import RankedRun, RetrievalRequest
 from semsearch.web.search.filters import compile_filters
-from semsearch.web.search.models import ChunkCandidate
+from semsearch.web.search.models import ChunkCandidate, RankedRun, RetrievalRequest
 
 
 async def retrieve_dense(

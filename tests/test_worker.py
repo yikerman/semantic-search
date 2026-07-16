@@ -8,8 +8,7 @@ import pytest
 
 from semsearch.cli.ingest.fetch import FetchError
 from semsearch.cli.ingest.lease import LeaseLostError
-from semsearch.cli.ingest.models import IndexOutcome
-from semsearch.cli.ingest.pipeline import IngestError
+from semsearch.cli.ingest.pipeline import IndexOutcome, IngestError
 from semsearch.cli.ingest.worker import (
     WORKER_LOCK_ID,
     BusySites,

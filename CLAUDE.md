@@ -16,7 +16,8 @@ Code is organized by ownership under three packages:
 
 Both surfaces may import `semsearch.share`. Shared code must not import either
 surface, and `semsearch.cli` and `semsearch.web` must not import each other.
-Put code in `share` only when both surfaces actually use it.
+Put code in `share` when both surfaces use it or when its functionality is
+general-purpose and independent of either surface.
 
 ## Code standards
 

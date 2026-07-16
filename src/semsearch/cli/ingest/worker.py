@@ -12,8 +12,7 @@ from semsearch.cli.ingest.chunk import Chunker
 from semsearch.cli.ingest.fetch import Fetcher
 from semsearch.cli.ingest.fetch import FetchError
 from semsearch.cli.ingest.lease import LeaseLostError, run_with_lease
-from semsearch.cli.ingest.models import IndexOutcome
-from semsearch.cli.ingest.pipeline import IngestError, ingest_job
+from semsearch.cli.ingest.pipeline import IndexOutcome, IngestError, ingest_job
 from semsearch.cli.models import CrawlJob
 from semsearch.cli.sites import poll_site_record
 from semsearch.share.config import Settings

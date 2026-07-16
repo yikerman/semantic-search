@@ -2,9 +2,9 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any, cast
 from uuid import uuid4
 
+from semsearch.cli.ingest.chunk import Chunk
 from semsearch.cli.ingest.extract import ExtractedPage
 from semsearch.cli.ingest.fetch import FetchResponse
-from semsearch.cli.ingest.models import Chunk
 from semsearch.cli.ingest.pipeline import ingest_job
 from semsearch.cli.models import CrawlJob
 

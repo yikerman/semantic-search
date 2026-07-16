@@ -2,9 +2,9 @@ from contextlib import asynccontextmanager
 from typing import Any, cast
 
 from semsearch.web import db
-from semsearch.web.search.base import RetrievalRequest
 from semsearch.web.search.bm25 import retrieve_bm25
 from semsearch.web.search.filters import SqlPredicate
+from semsearch.web.search.models import RetrievalRequest
 
 
 class FakePool:
