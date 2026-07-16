@@ -177,7 +177,8 @@ async def test_status_page_shows_recent_activity(monkeypatch):
     assert ">Status</a>" in response.text
     assert "<caption>Index totals</caption>" in response.text
     assert '<th scope="row">pages</th>' in response.text
-    assert "<td>100</td>" in response.text
+    assert "<td>~100</td>" in response.text
+    assert "<td>~400</td>" in response.text
     assert '<th scope="row">retrying</th>' in response.text
     assert "<td>3</td>" in response.text
     assert "Recent activity" in response.text

@@ -179,8 +179,8 @@ def status() -> None:
                 typer.echo("Database not initialized. Run: semsearch init-db")
                 raise typer.Exit(1) from None
         typer.echo(f"sites:   {stats.site_count}")
-        typer.echo(f"pages:   {stats.page_count}")
-        typer.echo(f"chunks:  {stats.chunk_count}")
+        typer.echo(f"pages:   ~{stats.page_count}")
+        typer.echo(f"chunks:  ~{stats.chunk_count}")
         typer.echo(f"queued:  {stats.queued_count}")
         typer.echo(f"retrying: {stats.retrying_count}")
         typer.echo(f"failed:  {stats.failed_count}")
