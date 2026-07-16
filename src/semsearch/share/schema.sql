@@ -42,8 +42,8 @@ CREATE INDEX IF NOT EXISTS crawl_jobs_ready_idx
 CREATE INDEX IF NOT EXISTS crawl_jobs_site_idx
     ON crawl_jobs (site_id, next_attempt_at);
 
-CREATE INDEX IF NOT EXISTS crawl_jobs_failed_idx
-    ON crawl_jobs (failed_at DESC)
+CREATE INDEX IF NOT EXISTS crawl_jobs_recent_failure_idx
+    ON crawl_jobs (failed_at DESC, url)
     WHERE failed_at IS NOT NULL;
 
 -- pages divided into several chunks
@@ -57,6 +57,9 @@ CREATE TABLE IF NOT EXISTS pages (
 );
 
 CREATE INDEX IF NOT EXISTS pages_site_idx ON pages (site_id);
+
+CREATE INDEX IF NOT EXISTS pages_recent_idx
+    ON pages (fetched_at DESC, url);
 
 -- each chunk hold an embedding
 CREATE TABLE IF NOT EXISTS chunks (

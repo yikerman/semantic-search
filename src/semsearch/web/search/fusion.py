@@ -5,7 +5,7 @@ from semsearch.web.search.base import RankedRun
 from semsearch.web.search.models import ChunkCandidate, PageCandidate
 
 RUN_WEIGHTS: Mapping[str, float] = MappingProxyType(
-    {"dense": 1.0, "bm25": 1.0, "length": 0.5}
+    {"dense": 2.0, "bm25": 1.0, "length": 1.0}
 )
 
 

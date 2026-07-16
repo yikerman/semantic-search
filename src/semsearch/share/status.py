@@ -27,10 +27,19 @@ async def fetch_index_stats(conn: psycopg.AsyncConnection) -> IndexStats:
         SELECT (SELECT count(*) FROM sites),
                (SELECT count(*) FROM pages),
                (SELECT count(*) FROM chunks),
-               (SELECT count(*) FROM crawl_jobs WHERE failed_at IS NULL),
-               (SELECT count(*) FROM crawl_jobs
-                WHERE failed_at IS NULL AND attempt_count > 0),
-               (SELECT count(*) FROM crawl_jobs WHERE failed_at IS NOT NULL)
+               jobs.queued_count,
+               jobs.retrying_count,
+               jobs.failed_count
+        FROM (
+            SELECT count(*) FILTER (WHERE failed_at IS NULL) AS queued_count,
+                   count(*) FILTER (
+                       WHERE failed_at IS NULL AND attempt_count > 0
+                   ) AS retrying_count,
+                   count(*) FILTER (
+                       WHERE failed_at IS NOT NULL
+                   ) AS failed_count
+            FROM crawl_jobs
+        ) AS jobs
         """
     )
     return IndexStats(*cast(tuple, await cur.fetchone()))

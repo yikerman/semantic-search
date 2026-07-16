@@ -38,12 +38,29 @@ uv run uvicorn semsearch.web.app:app --reload
 
 Check with `pyright`, `pytest`, `ruff` and `ty`.
 
+Apply migrations to an existing development database from the repository root:
+
+```sh
+docker compose exec -T db \
+  sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
+  < scripts/0000_a358487_add_status_indexes.sql
+```
+
 ## Deployment
 
 ```sh
 cp .env.example .env  # See .env.example for config keys
 docker compose --profile deploy up -d --build
 docker compose exec app /app/.venv/bin/semsearch init-db  # first run only
+```
+
+For an existing production database container, run the same migration without
+wrapping it in a transaction:
+
+```sh
+docker compose exec -T db \
+  sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
+  < scripts/0000_a358487_add_status_indexes.sql
 ```
 
 For an embedding server on the host, use

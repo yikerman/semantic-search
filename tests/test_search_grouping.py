@@ -74,20 +74,20 @@ def test_weighted_rrf_uses_page_runs_and_preserves_native_scores():
     assert fused[0].scores == {
         "dense": 0.8,
         "bm25": 4.0,
-        "rrf": pytest.approx(1 / 62 + 1 / 61),
+        "rrf": pytest.approx(2 / 62 + 1 / 61),
     }
 
 
-def test_length_run_contributes_half_weight_to_rrf():
+def test_dense_run_contributes_double_weight_to_rrf():
     dense = page_run("dense", page(1, dense=0.9), page(2, dense=0.8))
     lexical = page_run("bm25", page(2, bm25=4.0), page(1, bm25=3.0))
     length = page_run("length", page(2, length=2000), page(1, length=1000))
 
     fused = reciprocal_rank_fusion([dense, lexical, length], k=60)
 
-    assert [candidate.page_id for candidate in fused] == [2, 1]
-    assert fused[0].scores["rrf"] == pytest.approx(1 / 62 + 1 / 61 + 0.5 / 61)
-    assert fused[1].scores["rrf"] == pytest.approx(1 / 61 + 1 / 62 + 0.5 / 62)
+    assert [candidate.page_id for candidate in fused] == [1, 2]
+    assert fused[0].scores["rrf"] == pytest.approx(2 / 61 + 1 / 62 + 1 / 62)
+    assert fused[1].scores["rrf"] == pytest.approx(2 / 62 + 1 / 61 + 1 / 61)
 
 
 def test_rrf_rejects_run_without_explicit_weight():

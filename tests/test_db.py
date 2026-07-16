@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -46,6 +47,21 @@ def test_schema_adds_durable_crawl_and_poll_state():
     assert "WHERE next_attempt_at IS NOT NULL" in schema
     assert "ALTER TABLE" not in schema
     assert "last_indexed_at" not in schema
+
+
+def test_schema_and_migration_index_recent_activity():
+    schema = load_schema_sql(Settings(embedding_model="test-model", embedding_dim=2))
+    migration = Path("scripts/0000_a358487_add_status_indexes.sql").read_text()
+
+    for source in (schema, migration):
+        assert "pages_recent_idx" in source
+        assert "ON pages (fetched_at DESC, url)" in source
+        assert "crawl_jobs_recent_failure_idx" in source
+        assert "ON crawl_jobs (failed_at DESC, url)" in source
+        assert "WHERE failed_at IS NOT NULL" in source
+
+    assert "CREATE INDEX CONCURRENTLY" in migration
+    assert "DROP INDEX CONCURRENTLY IF EXISTS crawl_jobs_failed_idx" in migration
 
 
 class EmptyCursor:
