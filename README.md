@@ -81,6 +81,10 @@ process the queue concurrently during the transition.
 For an embedding server on the host, use
 `http://host.docker.internal:<port>/some-api-endpoint` in `.env`.
 
+The daemon downloads the pinned `EMBEDDING_TOKENIZER` revision to split pages
+into token windows. Compose keeps that small tokenizer artifact in the
+`tokenizer_cache` volume. Chunk text is sent to the embedding server as text.
+
 Run admin commands inside the container:
 
 ```sh

@@ -1,6 +1,7 @@
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
+
+from tokenizers import Tokenizer
 
 
 @dataclass(frozen=True, slots=True)
@@ -10,34 +11,44 @@ class Chunk:
     char_count: int
 
 
-_WORD = re.compile(r"\S+\s*")
-
-
 type Chunker = Callable[[str], list[Chunk]]
 
 
-def char_chunks(
-    text: str, *, chunk_chars: int = 1600, chunk_overlap: int = 240
+class TokenizerError(RuntimeError):
+    pass
+
+
+def load_tokenizer(identifier: str, revision: str) -> Tokenizer:
+    try:
+        return Tokenizer.from_pretrained(identifier, revision=revision)
+    except Exception as exc:  # noqa: BLE001
+        raise TokenizerError(
+            f"Could not load tokenizer {identifier} at revision {revision}"
+        ) from exc
+
+
+def token_chunks(
+    text: str,
+    *,
+    tokenizer: Tokenizer,
+    chunk_tokens: int = 384,
+    chunk_token_overlap: int = 64,
 ) -> list[Chunk]:
-    words = _WORD.findall(text)
-    if not words:
+    if not text.strip():
         return []
-    widths = [len(word) for word in words]
+    encoding = tokenizer.encode(text, add_special_tokens=False)
+    if not encoding.ids:
+        return []
 
     chunks: list[Chunk] = []
     start = 0
-    while start < len(words):
-        end, size = start, 0
-        while end < len(words) and (end == start or size + widths[end] <= chunk_chars):
-            size += widths[end]
-            end += 1
-        content = "".join(words[start:end]).strip()
+    while start < len(encoding.ids):
+        end = min(start + chunk_tokens, len(encoding.ids))
+        start_char = encoding.offsets[start][0]
+        end_char = encoding.offsets[end - 1][1]
+        content = text[start_char:end_char]
         chunks.append(Chunk(len(chunks), content, len(content)))
-        if end == len(words):
+        if end == len(encoding.ids):
             break
-        back, overlap = end, 0
-        while back > start + 1 and overlap < chunk_overlap:
-            back -= 1
-            overlap += widths[back]
-        start = back
+        start = end - chunk_token_overlap
     return chunks

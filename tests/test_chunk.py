@@ -1,58 +1,127 @@
-from semsearch.cli.ingest.chunk import char_chunks
+from dataclasses import dataclass
+from typing import Any, cast
+
+import pytest
+from tokenizers import Tokenizer
+
+from semsearch.cli.ingest import chunk
+from semsearch.cli.ingest.chunk import (
+    TokenizerError,
+    load_tokenizer,
+    token_chunks,
+)
 
 
-def words(n: int) -> str:
-    return " ".join(f"w{i}" for i in range(n))
+@dataclass
+class Encoding:
+    ids: list[int]
+    offsets: list[tuple[int, int]]
 
 
-def test_empty_text_yields_no_chunks():
-    assert char_chunks("", chunk_chars=12, chunk_overlap=3) == []
-    assert char_chunks("   \n  ", chunk_chars=12, chunk_overlap=3) == []
+class CharacterTokenizer:
+    def encode(self, text: str, *, add_special_tokens: bool) -> Encoding:
+        assert not add_special_tokens
+        return Encoding(
+            list(range(len(text))),
+            [(i, i + 1) for i in range(len(text))],
+        )
 
 
-def test_short_text_yields_single_chunk():
-    chunks = char_chunks(words(4), chunk_chars=30, chunk_overlap=6)
+@pytest.fixture
+def tokenizer() -> Tokenizer:
+    return cast(Any, CharacterTokenizer())
+
+
+def test_empty_text_yields_no_chunks(tokenizer):
+    assert token_chunks("", tokenizer=tokenizer, chunk_tokens=12) == []
+    assert token_chunks("   \n  ", tokenizer=tokenizer, chunk_tokens=12) == []
+
+
+def test_short_text_yields_single_chunk(tokenizer):
+    chunks = token_chunks("abcdefgh", tokenizer=tokenizer, chunk_tokens=12)
+
     assert len(chunks) == 1
     assert chunks[0].chunk_index == 0
-    assert chunks[0].content == words(4)
-    assert chunks[0].char_count == 11
+    assert chunks[0].content == "abcdefgh"
+    assert chunks[0].char_count == 8
 
 
-def test_windows_overlap_and_cover_everything():
-    chunks = char_chunks(words(10), chunk_chars=12, chunk_overlap=3)
-    assert [chunk.content for chunk in chunks] == [
-        "w0 w1 w2 w3",
-        "w3 w4 w5 w6",
-        "w6 w7 w8 w9",
+def test_strict_windows_overlap_and_cover_everything(tokenizer):
+    chunks = token_chunks(
+        "abcdefghijklmnopqrst",
+        tokenizer=tokenizer,
+        chunk_tokens=8,
+        chunk_token_overlap=2,
+    )
+
+    assert [item.content for item in chunks] == [
+        "abcdefgh",
+        "ghijklmn",
+        "mnopqrst",
     ]
-    assert [chunk.chunk_index for chunk in chunks] == [0, 1, 2]
-    assert [chunk.char_count for chunk in chunks] == [11, 11, 11]
+    assert [item.chunk_index for item in chunks] == [0, 1, 2]
 
 
-def test_trailing_words_get_their_own_chunk():
-    chunks = char_chunks(words(11), chunk_chars=12, chunk_overlap=3)
-    assert chunks[-1].content == "w9 w10"
-    assert chunks[-1].char_count == 6
+def test_trailing_tokens_get_their_own_overlapping_chunk(tokenizer):
+    chunks = token_chunks(
+        "abcdefghijklmnopq",
+        tokenizer=tokenizer,
+        chunk_tokens=8,
+        chunk_token_overlap=2,
+    )
+
+    assert chunks[-1].content == "mnopq"
 
 
-def test_no_redundant_trailing_window():
-    chunks = char_chunks(words(4), chunk_chars=12, chunk_overlap=3)
+def test_no_redundant_trailing_window(tokenizer):
+    chunks = token_chunks(
+        "abcdefgh",
+        tokenizer=tokenizer,
+        chunk_tokens=8,
+        chunk_token_overlap=2,
+    )
+
     assert len(chunks) == 1
 
 
-def test_word_longer_than_window_is_kept_whole():
-    chunks = char_chunks("supercalifragilistic tiny", chunk_chars=5, chunk_overlap=2)
-    assert [chunk.content for chunk in chunks] == ["supercalifragilistic", "tiny"]
+def test_unspaced_cjk_is_split_by_tokens(tokenizer):
+    text = "中文输入没有空格也必须正确分块"
+    chunks = token_chunks(
+        text,
+        tokenizer=tokenizer,
+        chunk_tokens=6,
+        chunk_token_overlap=2,
+    )
+
+    assert len(chunks) > 1
+    assert all(item.char_count <= 6 for item in chunks)
+    assert chunks[0].content == text[:6]
+    assert chunks[1].content == text[4:10]
 
 
-def test_windows_never_split_a_word():
-    text = " ".join(f"word{i:03d}" for i in range(50))
-    vocabulary = set(text.split())
-    for chunk in char_chunks(text, chunk_chars=40, chunk_overlap=10):
-        assert set(chunk.content.split()) <= vocabulary
+def test_load_tokenizer_uses_pinned_revision(monkeypatch):
+    calls: list[tuple[str, str]] = []
+    expected = tokenizer = cast(Any, CharacterTokenizer())
+
+    class Factory:
+        @staticmethod
+        def from_pretrained(identifier: str, *, revision: str):
+            calls.append((identifier, revision))
+            return expected
+
+    monkeypatch.setattr(chunk, "Tokenizer", Factory)
+
+    assert load_tokenizer("org/model", "commit") is tokenizer
+    assert calls == [("org/model", "commit")]
 
 
-def test_internal_whitespace_is_preserved():
-    text = "alpha beta\n\ngamma delta"
-    chunks = char_chunks(text, chunk_chars=100, chunk_overlap=10)
-    assert [chunk.content for chunk in chunks] == [text]
+def test_load_tokenizer_wraps_provider_errors(monkeypatch):
+    class Factory:
+        @staticmethod
+        def from_pretrained(identifier: str, *, revision: str):
+            raise OSError("offline")
+
+    monkeypatch.setattr(chunk, "Tokenizer", Factory)
+
+    with pytest.raises(TokenizerError, match="org/model.*commit"):
+        load_tokenizer("org/model", "commit")

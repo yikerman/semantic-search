@@ -13,7 +13,11 @@ from psycopg_pool import AsyncConnectionPool
 
 from semsearch.cli import db
 from semsearch.cli.daemon import DaemonAlreadyRunningError, run_daemon
-from semsearch.cli.ingest.chunk import Chunker, char_chunks
+from semsearch.cli.ingest.chunk import (
+    TokenizerError,
+    load_tokenizer,
+    token_chunks,
+)
 from semsearch.cli.ingest.feed import FeedError
 from semsearch.cli.ingest.fetch import FetchError, Fetcher, create_fetcher
 from semsearch.cli.models import Site
@@ -21,7 +25,6 @@ from semsearch.cli.sites import SiteError, add_site, list_sites
 from semsearch.share.config import Settings, get_settings
 from semsearch.share.db import create_pool
 from semsearch.share.embeddings import (
-    EmbedDocuments,
     EmbeddingError,
     create_embeddings,
 )
@@ -38,29 +41,16 @@ class Services:
     settings: Settings
     pool: AsyncConnectionPool
     fetcher: Fetcher
-    embed_documents: EmbedDocuments
-    chunker: Chunker
 
 
 @asynccontextmanager
 async def open_services() -> AsyncIterator[Services]:
     settings = get_settings()
     async with (
-        create_embeddings(settings) as embedder,
         create_pool(settings) as pool,
         create_fetcher(settings) as fetcher,
     ):
-        yield Services(
-            settings,
-            pool,
-            fetcher,
-            embedder.embed_documents,
-            partial(
-                char_chunks,
-                chunk_chars=settings.chunk_chars,
-                chunk_overlap=settings.chunk_overlap,
-            ),
-        )
+        yield Services(settings, pool, fetcher)
 
 
 def run(coro: Coroutine[Any, Any, Any]) -> Any:
@@ -70,6 +60,7 @@ def run(coro: Coroutine[Any, Any, Any]) -> Any:
         FetchError,
         FeedError,
         EmbeddingError,
+        TokenizerError,
         SiteError,
         DaemonAlreadyRunningError,
     ) as exc:
@@ -154,13 +145,24 @@ def daemon() -> None:
 
     async def _daemon() -> None:
         async with open_services() as services:
-            await run_daemon(
-                services.pool,
-                services.embed_documents,
-                services.fetcher,
-                services.chunker,
-                services.settings,
+            settings = services.settings
+            tokenizer = load_tokenizer(
+                settings.embedding_tokenizer,
+                settings.embedding_tokenizer_revision,
             )
+            async with create_embeddings(settings) as embedder:
+                await run_daemon(
+                    services.pool,
+                    embedder.embed_documents,
+                    services.fetcher,
+                    partial(
+                        token_chunks,
+                        tokenizer=tokenizer,
+                        chunk_tokens=settings.chunk_tokens,
+                        chunk_token_overlap=settings.chunk_token_overlap,
+                    ),
+                    settings,
+                )
 
     run(_daemon())
 

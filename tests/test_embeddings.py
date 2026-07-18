@@ -68,3 +68,64 @@ async def test_embedding_client_wraps_invalid_json():
 
     with pytest.raises(EmbeddingError, match="invalid JSON"):
         await embedder.embed_query("query")
+
+
+class EmbeddingResponse:
+    status_code = 200
+    text = ""
+
+    def __init__(self, count: int) -> None:
+        self.count = count
+
+    def json(self):
+        return {
+            "data": [
+                {"index": index, "embedding": [1.0]} for index in range(self.count)
+            ]
+        }
+
+
+class RecordingClient:
+    def __init__(self) -> None:
+        self.payloads: list[object] = []
+
+    async def post(self, path, json):
+        self.payloads.append(json)
+        return EmbeddingResponse(len(json["input"]))
+
+
+def recording_embedder(client: RecordingClient, *, query_instruction=""):
+    embedder = cast(Any, OpenAICompatEmbeddings.__new__(OpenAICompatEmbeddings))
+    embedder.model = "test"
+    embedder.batch_size = 32
+    embedder.query_instruction = query_instruction
+    embedder.expected_dim = 1
+    embedder.max_retries = 1
+    embedder._client = client
+    return embedder
+
+
+async def test_document_embeddings_send_text():
+    client = RecordingClient()
+    embedder = recording_embedder(client)
+
+    await embedder.embed_documents(["one", "three"])
+
+    assert client.payloads == [{"model": "test", "input": ["one", "three"]}]
+
+
+async def test_query_embeddings_send_instructed_text():
+    client = RecordingClient()
+    embedder = recording_embedder(
+        client,
+        query_instruction="find passages",
+    )
+
+    await embedder.embed_query("needles")
+
+    assert client.payloads == [
+        {
+            "model": "test",
+            "input": ["Instruct: find passages\nQuery: needles"],
+        }
+    ]

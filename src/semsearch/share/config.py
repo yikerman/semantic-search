@@ -1,10 +1,13 @@
 from functools import lru_cache
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, StringConstraints, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 type LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+type NonBlankString = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1)
+]
 
 
 class Settings(BaseSettings):
@@ -19,13 +22,17 @@ class Settings(BaseSettings):
     embedding_model: str = "qwen/qwen3-embedding-4b"
     embedding_dim: Annotated[int, Field(gt=0)] = 2560
     embedding_batch_size: Annotated[int, Field(gt=0)] = 32
+    embedding_tokenizer: NonBlankString = "Qwen/Qwen3-Embedding-4B"
+    embedding_tokenizer_revision: NonBlankString = (
+        "5cf2132abc99cad020ac570b19d031efec650f2b"
+    )
 
     query_instruction: str = (
         "Given a web search query, retrieve relevant passages that answer the query"
     )
 
-    chunk_chars: Annotated[int, Field(gt=0)] = 1600
-    chunk_overlap: Annotated[int, Field(ge=0)] = 240
+    chunk_tokens: Annotated[int, Field(gt=0)] = 384
+    chunk_token_overlap: Annotated[int, Field(ge=0)] = 64
 
     fetch_delay_seconds: Annotated[float, Field(ge=0)] = 1.0
     fetch_timeout_seconds: Annotated[float, Field(gt=0)] = 20.0
@@ -40,8 +47,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_chunk_window(self) -> Self:
-        if self.chunk_overlap >= self.chunk_chars:
-            raise ValueError("CHUNK_OVERLAP must be smaller than CHUNK_CHARS")
+        if self.chunk_token_overlap >= self.chunk_tokens:
+            raise ValueError("CHUNK_TOKEN_OVERLAP must be smaller than CHUNK_TOKENS")
         return self
 
 

@@ -54,7 +54,7 @@ The `semsearch.cli.ingest` pipeline is:
 
 1. fetch HTML with `curl-cffi`
 2. extract main text with `trafilatura`
-3. split with `char_chunks`
+3. split into token windows with the configured embedding tokenizer
 4. embed document chunks
 5. store pages and chunks
 
@@ -77,8 +77,8 @@ URLs.
   `EMBEDDING_DIM` means wiping and re-indexing.
 - Query embeddings use `QUERY_INSTRUCTION`; document embeddings use page title
   plus chunk text.
-- Chunk windows count characters, not tokens. Keep it that way unless the
-  retrieval strategy changes.
+- Document chunks use fixed token windows from the pinned embedding tokenizer.
+  Query and document embedding inputs are sent to the embedding API as text.
 - Dense retrieval uses a pgvector `halfvec` HNSW cosine ANN index. Keep
   embeddings within pgvector halfvec limits; use MRL truncation if a model
   exceeds them.

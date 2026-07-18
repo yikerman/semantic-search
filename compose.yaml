@@ -47,9 +47,12 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-semsearch}:${POSTGRES_PASSWORD:-semsearch}@db:5432/${POSTGRES_DB:-semsearch}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - tokenizer_cache:/root/.cache/huggingface
     depends_on:
       db:
         condition: service_healthy
 
 volumes:
   pgdata:
+  tokenizer_cache:

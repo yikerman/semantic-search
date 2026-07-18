@@ -190,7 +190,7 @@ async def _ingest_crawl_attempt(
     if page is None:
         raise _ContentError("no extractable article text")
 
-    chunks = chunker(page.text)
+    chunks = await asyncio.to_thread(chunker, page.text)
     if not chunks:
         raise _ContentError("article produced no chunks")
     vectors = await embed_documents(

@@ -16,6 +16,7 @@ dependencies = [
     "psycopg[binary]>=3.3.4",
     "py3langid>=0.3.0",
     "pydantic-settings>=2.14.2",
+    "tokenizers>=0.23.1",
     "trafilatura>=2.1.0",
     "typer>=0.26.8",
     "uvicorn[standard]>=0.51.0",

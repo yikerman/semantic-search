@@ -11,8 +11,8 @@ from semsearch.share.config import Settings
     [
         ("embedding_dim", 0),
         ("embedding_batch_size", 0),
-        ("chunk_chars", 0),
-        ("chunk_overlap", -1),
+        ("chunk_tokens", 0),
+        ("chunk_token_overlap", -1),
         ("fetch_delay_seconds", -1),
         ("fetch_timeout_seconds", 0),
         ("fetch_concurrency", 0),
@@ -32,8 +32,19 @@ def test_settings_reject_invalid_numeric_values(field: str, value: object):
 
 
 def test_settings_reject_chunk_overlap_at_least_window_size():
-    with pytest.raises(ValidationError, match="CHUNK_OVERLAP"):
-        Settings(chunk_chars=100, chunk_overlap=100)
+    with pytest.raises(ValidationError, match="CHUNK_TOKEN_OVERLAP"):
+        Settings(chunk_tokens=100, chunk_token_overlap=100)
+
+
+@pytest.mark.parametrize(
+    "field", ["embedding_tokenizer", "embedding_tokenizer_revision"]
+)
+@pytest.mark.parametrize("value", ["", "   "])
+def test_settings_reject_blank_tokenizer_values(field: str, value: str):
+    values: dict[str, Any] = {field: value}
+
+    with pytest.raises(ValidationError):
+        Settings(**values)
 
 
 def test_default_site_poll_interval_is_twelve_hours(tmp_path, monkeypatch):
