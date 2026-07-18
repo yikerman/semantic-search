@@ -7,6 +7,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Annotated
 
+from async_lru import alru_cache
 from fastapi import FastAPI, Query, Request, status as http_status
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -80,11 +81,19 @@ async def lifespan(app: FastAPI):
         try:
             yield
         finally:
+            await app.state.list_available_languages.cache_close()
             logger.info("Stopping web application")
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="semsearch", lifespan=lifespan)
+
+    @alru_cache(maxsize=1, ttl=300)
+    async def cached_available_languages() -> tuple[str, ...]:
+        async with app.state.pool.connection() as conn:
+            return tuple(await list_available_languages(conn))
+
+    app.state.list_available_languages = cached_available_languages
     app.mount(
         "/static",
         StaticFiles(directory=Path(__file__).parent / "static"),
@@ -103,8 +112,7 @@ def create_app() -> FastAPI:
         status_code = http_status.HTTP_200_OK
         query = q.strip()
         selected_language = lang.lower() if lang else None
-        async with request.app.state.pool.connection() as conn:
-            available_languages = await list_available_languages(conn)
+        available_languages = await request.app.state.list_available_languages()
         if query:
             rerankers = (rerank_by_length,) if encourage_long_content else ()
             filters = (

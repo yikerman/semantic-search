@@ -18,6 +18,30 @@ async def languages(conn):
     return ["en", "fr"]
 
 
+async def test_available_languages_are_cached(monkeypatch):
+    calls = 0
+
+    async def counting_languages(conn):
+        nonlocal calls
+        calls += 1
+        return ["en", "fr"]
+
+    app = create_app()
+    app.state.pool = Pool()
+    monkeypatch.setattr(
+        "semsearch.web.app.list_available_languages", counting_languages
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        first = await client.get("/")
+        second = await client.get("/")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert calls == 1
+
+
 async def test_search_logs_duration_and_result_count_without_query(caplog, monkeypatch):
     app = create_app()
     query = "private search terms"

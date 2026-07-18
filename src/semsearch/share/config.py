@@ -1,4 +1,4 @@
-from functools import lru_cache
+from functools import cache
 from typing import Annotated, Literal, Self
 
 from pydantic import Field, StringConstraints, model_validator
@@ -52,6 +52,6 @@ class Settings(BaseSettings):
         return self
 
 
-@lru_cache
+@cache
 def get_settings() -> Settings:
     return Settings()

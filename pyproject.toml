@@ -5,6 +5,7 @@ description = "Embeddings-first search engine for indie blogs"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "async-lru>=2.3.0",
     "curl-cffi>=0.15.0",
     "defusedxml>=0.7.1",
     "fastapi>=0.139.0",

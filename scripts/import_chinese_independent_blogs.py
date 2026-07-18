@@ -82,9 +82,7 @@ async def main() -> int:
         )
 
 
-async def fetch_rows(
-    fetcher: Fetcher, url: str
-) -> list[dict[str, str | None]]:
+async def fetch_rows(fetcher: Fetcher, url: str) -> list[dict[str, str | None]]:
     response = await fetcher.fetch_response(url)
     try:
         text = response.body.decode("utf-8-sig")
@@ -117,9 +115,7 @@ def select_feeds(
     )
 
 
-def parse_feed(
-    row: dict[str, str | None], *, line_number: int
-) -> BlogFeed | None:
+def parse_feed(row: dict[str, str | None], *, line_number: int) -> BlogFeed | None:
     raw_feed = (row.get("RSS feed") or "").strip()
     if not raw_feed:
         return None
