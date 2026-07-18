@@ -94,6 +94,8 @@ uv run semsearch site add https://some.blog/ --sitemap auto --feed auto
 uv run semsearch daemon
 uv run uvicorn semsearch.web.app:app --reload
 uv run pytest
+uv run ruff format
 uv run ruff check
 uv run pyright
+uv run ty check
 ```

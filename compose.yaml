@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-semsearch}
       POSTGRES_DB: ${POSTGRES_DB:-semsearch}
     ports:
-      # Host access is for local admin only; containers use the compose network.
+      # host access is for local admin only; containers use the compose network.
       - "127.0.0.1:5432:5432"
     volumes:
       - ${PGDATA_DIR:-pgdata}:/var/lib/postgresql
@@ -28,6 +28,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-semsearch}:${POSTGRES_PASSWORD:-semsearch}@db:5432/${POSTGRES_DB:-semsearch}
     extra_hosts:
+      # expose potential host openai api
       - "host.docker.internal:host-gateway"
     depends_on:
       db:
