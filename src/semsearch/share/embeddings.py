@@ -50,14 +50,24 @@ class OpenAICompatEmbeddings:
         return (await self._embed([text]))[0]
 
     async def _embed(self, batch: list[str]) -> list[list[float]]:
-        return _parse_embeddings(
-            await self._request(batch),
-            expected_count=len(batch),
-            expected_dim=self.expected_dim,
-            model=self.model,
-        )
+        payload, request_id = await self._request(batch)
+        try:
+            return _parse_embeddings(
+                payload,
+                expected_count=len(batch),
+                expected_dim=self.expected_dim,
+                model=self.model,
+            )
+        except EmbeddingError as exc:
+            context = _response_context(
+                model=self.model,
+                input_count=len(batch),
+                request_id=request_id,
+            )
+            summary = _payload_summary(payload)
+            raise EmbeddingError(f"{exc} (HTTP 200, {context}; {summary})") from exc
 
-    async def _request(self, batch: list[str]) -> object:
+    async def _request(self, batch: list[str]) -> tuple[object, str | None]:
         last_error: Exception | None = None
         for attempt in range(self.max_retries):
             if attempt:
@@ -71,16 +81,30 @@ class OpenAICompatEmbeddings:
                 continue
             if resp.status_code == 200:
                 try:
-                    return resp.json()
+                    return resp.json(), _request_id(resp)
                 except ValueError as exc:
-                    raise EmbeddingError("Embedding API returned invalid JSON") from exc
+                    context = _response_context(
+                        model=self.model,
+                        input_count=len(batch),
+                        request_id=_request_id(resp),
+                    )
+                    raise EmbeddingError(
+                        "Embedding API returned invalid JSON "
+                        f"(HTTP 200, {context}; response={resp.text[:500]!r})"
+                    ) from exc
+            context = _response_context(
+                model=self.model,
+                input_count=len(batch),
+                request_id=_request_id(resp),
+            )
             last_error = EmbeddingError(
-                f"Embedding API returned {resp.status_code}: {resp.text[:500]}"
+                f"Embedding API returned HTTP {resp.status_code} "
+                f"({context}; response={resp.text[:500]!r})"
             )
             if resp.status_code not in (429, 500, 502, 503, 504):
                 raise last_error
         raise EmbeddingError(
-            f"Embedding request failed after {self.max_retries} attempts"
+            f"Embedding request failed after {self.max_retries} attempts: {last_error}"
         ) from last_error
 
     async def aclose(self) -> None:
@@ -91,6 +115,31 @@ class OpenAICompatEmbeddings:
 
     async def __aexit__(self, *exc_info: object) -> None:
         await self.aclose()
+
+
+def _request_id(response: httpx.Response) -> str | None:
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    return headers.get("x-request-id") or headers.get("cf-ray")
+
+
+def _response_context(*, model: str, input_count: int, request_id: str | None) -> str:
+    context = f"model={model}, inputs={input_count}"
+    if request_id:
+        context += f", request_id={request_id}"
+    return context
+
+
+def _payload_summary(payload: object) -> str:
+    if not isinstance(payload, dict):
+        return f"response_type={type(payload).__name__}"
+
+    keys = sorted(str(key) for key in payload)
+    summary = f"response_keys={keys!r}"
+    if "error" in payload:
+        summary += f", error={payload.get('error')!r}"
+    return summary[:500]
 
 
 def _parse_embeddings(
