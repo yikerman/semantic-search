@@ -23,7 +23,6 @@ services:
     build:
       context: .
       dockerfile: Containerfile
-    profiles: ["deploy"]
     env_file: .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-semsearch}:${POSTGRES_PASSWORD:-semsearch}@db:5432/${POSTGRES_DB:-semsearch}
@@ -41,7 +40,6 @@ services:
     build:
       context: .
       dockerfile: Containerfile
-    profiles: ["deploy"]
     command: ["/app/.venv/bin/semsearch", "daemon"]
     env_file: .env
     environment:

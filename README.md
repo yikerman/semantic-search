@@ -23,6 +23,8 @@ src/semsearch/
 
 ## Development
 
+Running db in container and python apps on host would be easier:
+
 ```sh
 uv sync
 docker compose up -d db
@@ -49,7 +51,7 @@ uv run python scripts/0001_2bfa077_add_page_language.py
 
 ```sh
 cp .env.example .env  # See .env.example for config keys
-docker compose --profile deploy up -d --build
+docker compose up -d --build
 docker compose exec app /app/.venv/bin/semsearch init-db  # first run only
 ```
 

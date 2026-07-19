@@ -86,6 +86,8 @@ URLs.
 
 ## Dev Loop
 
+Start only the database with Compose; run the daemon and web app on the host.
+
 ```sh
 podman compose up -d db
 cp .env.example .env
