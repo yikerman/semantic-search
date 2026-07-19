@@ -124,3 +124,24 @@ async def test_search_rejects_malformed_language_code():
         response = await client.get("/", params={"q": "query", "lang": "english"})
 
     assert response.status_code == 422
+
+
+async def test_search_accepts_empty_language_without_filter(monkeypatch):
+    app = create_app()
+    app.state.pool = Pool()
+    app.state.embed_query = object()
+
+    async def fake_search(value: str, **kwargs):
+        assert value == "query"
+        assert kwargs["filters"] == ()
+        return []
+
+    monkeypatch.setattr("semsearch.web.app.search", fake_search)
+    monkeypatch.setattr("semsearch.web.app.list_available_languages", languages)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/", params={"q": "query", "lang": ""})
+
+    assert response.status_code == 200
+    assert '<option value="">Any language</option>' in response.text

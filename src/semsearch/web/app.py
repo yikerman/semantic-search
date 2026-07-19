@@ -105,7 +105,7 @@ def create_app() -> FastAPI:
         request: Request,
         q: str = "",
         encourage_long_content: bool = False,
-        lang: Annotated[str | None, Query(pattern=r"^[A-Za-z]{2}$")] = None,
+        lang: Annotated[str | None, Query(pattern=r"^(?:[A-Za-z]{2})?$")] = None,
     ):
         results = None
         error = None
