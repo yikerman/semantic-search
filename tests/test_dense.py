@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from typing import Any, cast
 
 from semsearch.web import db
-from semsearch.web.search.bm25 import retrieve_bm25
+from semsearch.web.search.dense import retrieve_dense
 from semsearch.web.search.filters import SqlPredicate
 from semsearch.web.search.models import RetrievalRequest
 
@@ -13,27 +13,21 @@ class FakePool:
         yield object()
 
 
-async def test_retrieve_bm25_returns_named_run_with_native_scores(monkeypatch):
+async def test_retrieve_dense_returns_named_run_with_native_scores(monkeypatch):
     calls: list[dict[str, object]] = []
 
     async def fetch_rows(conn, **kwargs):
         calls.append({"conn": conn, **kwargs})
-        return [
-            db.Bm25CandidateRecord(
-                chunk_id=7,
-                page_id=3,
-                rank=0.25,
-            )
-        ]
+        return [db.DenseCandidateRecord(chunk_id=7, page_id=3, similarity=0.75)]
 
-    monkeypatch.setattr(db, "fetch_bm25_candidate_rows", fetch_rows)
+    monkeypatch.setattr(db, "fetch_dense_candidate_rows", fetch_rows)
     request = RetrievalRequest("matching", (1.0, 0.0), (), 12)
 
-    result = await retrieve_bm25(request, pool=cast(Any, FakePool()))
+    result = await retrieve_dense(request, pool=cast(Any, FakePool()))
 
-    assert result.name == "bm25"
-    assert result.candidates[0].scores == {"bm25": 0.25}
-    assert calls[0]["query"] == "matching"
+    assert result.name == "dense"
+    assert result.candidates[0].scores == {"dense": 0.75}
+    assert calls[0]["query_embedding"] == (1.0, 0.0)
     assert calls[0]["limit"] == 12
     predicate = cast(SqlPredicate, calls[0]["predicate"])
     assert predicate.clause.as_string() == "TRUE"

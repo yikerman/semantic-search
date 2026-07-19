@@ -41,9 +41,8 @@ def test_short_text_yields_single_chunk(tokenizer):
     chunks = token_chunks("abcdefgh", tokenizer=tokenizer, chunk_tokens=12)
 
     assert len(chunks) == 1
-    assert chunks[0].chunk_index == 0
+    assert chunks[0].start_offset == 0
     assert chunks[0].content == "abcdefgh"
-    assert chunks[0].char_count == 8
 
 
 def test_strict_windows_overlap_and_cover_everything(tokenizer):
@@ -59,7 +58,7 @@ def test_strict_windows_overlap_and_cover_everything(tokenizer):
         "ghijklmn",
         "mnopqrst",
     ]
-    assert [item.chunk_index for item in chunks] == [0, 1, 2]
+    assert [item.start_offset for item in chunks] == [0, 6, 12]
 
 
 def test_trailing_tokens_get_their_own_overlapping_chunk(tokenizer):
@@ -94,7 +93,8 @@ def test_unspaced_cjk_is_split_by_tokens(tokenizer):
     )
 
     assert len(chunks) > 1
-    assert all(item.char_count <= 6 for item in chunks)
+    assert all(len(item.content) <= 6 for item in chunks)
+    assert [item.start_offset for item in chunks[:2]] == [0, 4]
     assert chunks[0].content == text[:6]
     assert chunks[1].content == text[4:10]
 

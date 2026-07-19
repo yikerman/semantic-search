@@ -11,9 +11,6 @@ from semsearch.web.search.filters import SearchFilter
 class ChunkCandidate:
     chunk_id: int
     page_id: int
-    url: str
-    title: str | None
-    content: str
     scores: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

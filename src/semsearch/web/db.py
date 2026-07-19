@@ -14,9 +14,6 @@ from semsearch.web.search.filters import SqlPredicate
 class DenseCandidateRecord:
     chunk_id: int
     page_id: int
-    url: str
-    title: str | None
-    content: str
     similarity: float
 
 
@@ -24,10 +21,15 @@ class DenseCandidateRecord:
 class Bm25CandidateRecord:
     chunk_id: int
     page_id: int
+    rank: float
+
+
+@dataclass(frozen=True, slots=True)
+class PageRecord:
+    page_id: int
     url: str
     title: str | None
     content: str
-    rank: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +39,53 @@ class RecentActivity:
     occurred_at: datetime
     attempt_count: int | None
     detail: str | None
+
+
+def _page_record_from_row(row: tuple[object, ...]) -> PageRecord:
+    if len(row) != 4:
+        raise ValueError("invalid page database row")
+    page_id, url, title, content = row
+    if (
+        not isinstance(page_id, int)
+        or isinstance(page_id, bool)
+        or not isinstance(url, str)
+        or (title is not None and not isinstance(title, str))
+        or not isinstance(content, str)
+    ):
+        raise ValueError("invalid page database row")
+    return PageRecord(page_id, url, title, content)
+
+
+def _dense_candidate_from_row(row: tuple[object, ...]) -> DenseCandidateRecord:
+    if len(row) != 3:
+        raise ValueError("invalid dense candidate database row")
+    chunk_id, page_id, similarity = row
+    if (
+        not isinstance(chunk_id, int)
+        or isinstance(chunk_id, bool)
+        or not isinstance(page_id, int)
+        or isinstance(page_id, bool)
+        or not isinstance(similarity, (int, float))
+        or isinstance(similarity, bool)
+    ):
+        raise ValueError("invalid dense candidate database row")
+    return DenseCandidateRecord(chunk_id, page_id, float(similarity))
+
+
+def _bm25_candidate_from_row(row: tuple[object, ...]) -> Bm25CandidateRecord:
+    if len(row) != 3:
+        raise ValueError("invalid BM25 candidate database row")
+    chunk_id, page_id, rank = row
+    if (
+        not isinstance(chunk_id, int)
+        or isinstance(chunk_id, bool)
+        or not isinstance(page_id, int)
+        or isinstance(page_id, bool)
+        or not isinstance(rank, (int, float))
+        or isinstance(rank, bool)
+    ):
+        raise ValueError("invalid BM25 candidate database row")
+    return Bm25CandidateRecord(chunk_id, page_id, float(rank))
 
 
 def _recent_activity_from_row(row: tuple[object, ...]) -> RecentActivity:
@@ -91,26 +140,19 @@ async def list_available_languages(conn: psycopg.AsyncConnection) -> list[str]:
     return languages
 
 
-async def fetch_page_chunks(
+async def fetch_pages(
     conn: psycopg.AsyncConnection, *, page_ids: Sequence[int]
-) -> dict[int, tuple[str, ...]]:
+) -> dict[int, PageRecord]:
     cur = await conn.execute(
         """
-        SELECT page_id, content FROM chunks
-        WHERE page_id = ANY(%s)
-        ORDER BY page_id, chunk_index
+        SELECT id, url, title, content
+        FROM pages
+        WHERE id = ANY(%s)
         """,
         (list(page_ids),),
     )
-    chunks: dict[int, list[str]] = {}
-    for row in await cur.fetchall():
-        if len(row) != 2:
-            raise ValueError("invalid page chunk database row")
-        page_id, content = row
-        if not isinstance(page_id, int) or not isinstance(content, str):
-            raise ValueError("invalid page chunk database row")
-        chunks.setdefault(page_id, []).append(content)
-    return {page_id: tuple(content) for page_id, content in chunks.items()}
+    records = [_page_record_from_row(row) for row in await cur.fetchall()]
+    return {record.page_id: record for record in records}
 
 
 async def list_recent_activity(
@@ -148,8 +190,7 @@ async def fetch_dense_candidate_rows(
     cur = await conn.execute(
         sql.SQL(
             """
-        SELECT c.id, c.page_id, p.url, p.title, c.content,
-               1 - (c.embedding <=> %s) AS similarity
+        SELECT c.id, c.page_id, 1 - (c.embedding <=> %s) AS similarity
         FROM chunks c
         JOIN pages p ON p.id = c.page_id
         WHERE {predicate}
@@ -159,7 +200,7 @@ async def fetch_dense_candidate_rows(
         ).format(predicate=predicate.clause),
         (embedding, *predicate.params, embedding, limit),
     )
-    return [DenseCandidateRecord(*row) for row in await cur.fetchall()]
+    return [_dense_candidate_from_row(row) for row in await cur.fetchall()]
 
 
 async def fetch_bm25_candidate_rows(
@@ -175,7 +216,7 @@ async def fetch_bm25_candidate_rows(
         WITH search_query AS (
             SELECT websearch_to_tsquery('simple', %s) AS value
         )
-        SELECT c.id, c.page_id, p.url, p.title, c.content,
+        SELECT c.id, c.page_id,
                ts_rank_cd(c.search_vector, search_query.value) AS rank
         FROM chunks c
         JOIN pages p ON p.id = c.page_id
@@ -188,4 +229,4 @@ async def fetch_bm25_candidate_rows(
         ).format(predicate=predicate.clause),
         (query, *predicate.params, limit),
     )
-    return [Bm25CandidateRecord(*row) for row in await cur.fetchall()]
+    return [_bm25_candidate_from_row(row) for row in await cur.fetchall()]

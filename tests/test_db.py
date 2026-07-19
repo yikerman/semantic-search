@@ -1,5 +1,4 @@
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -10,7 +9,7 @@ from semsearch.share.config import Settings
 from semsearch.web.db import (
     fetch_bm25_candidate_rows,
     fetch_dense_candidate_rows,
-    fetch_page_chunks,
+    fetch_pages,
     list_available_languages,
     list_recent_activity,
 )
@@ -25,11 +24,17 @@ def test_schema_uses_halfvec_hnsw_cosine_index():
     assert "index_meta" not in schema
 
 
-def test_schema_indexes_chunk_content_for_full_text_search():
+def test_schema_keeps_canonical_page_content_and_derived_chunk_spans():
     schema = load_schema_sql(Settings(embedding_model="test-model", embedding_dim=2))
+    chunks = schema.split("CREATE TABLE IF NOT EXISTS chunks", 1)[1].split(");", 1)[0]
 
-    assert "search_vector tsvector GENERATED ALWAYS AS" in schema
-    assert "to_tsvector('simple', content)" in schema
+    assert "content text NOT NULL" in schema
+    assert "start_offset int NOT NULL CHECK (start_offset >= 0)" in chunks
+    assert "content_length int NOT NULL CHECK (content_length > 0)" in chunks
+    assert "search_vector tsvector NOT NULL" in chunks
+    assert "UNIQUE (page_id, start_offset)" in chunks
+    assert "content text" not in chunks
+    assert "GENERATED ALWAYS" not in chunks
     assert "USING gin (search_vector)" in schema
 
 
@@ -50,19 +55,14 @@ def test_schema_adds_durable_crawl_and_poll_state():
     assert "last_indexed_at" not in schema
 
 
-def test_schema_and_migration_index_recent_activity():
+def test_schema_indexes_recent_activity():
     schema = load_schema_sql(Settings(embedding_model="test-model", embedding_dim=2))
-    migration = Path("scripts/0000_a358487_add_status_indexes.sql").read_text()
 
-    for source in (schema, migration):
-        assert "pages_recent_idx" in source
-        assert "ON pages (fetched_at DESC, url)" in source
-        assert "crawl_jobs_recent_failure_idx" in source
-        assert "ON crawl_jobs (failed_at DESC, url)" in source
-        assert "WHERE failed_at IS NOT NULL" in source
-
-    assert "CREATE INDEX CONCURRENTLY" in migration
-    assert "DROP INDEX CONCURRENTLY IF EXISTS crawl_jobs_failed_idx" in migration
+    assert "pages_recent_idx" in schema
+    assert "ON pages (fetched_at DESC, url)" in schema
+    assert "crawl_jobs_recent_failure_idx" in schema
+    assert "ON crawl_jobs (failed_at DESC, url)" in schema
+    assert "WHERE failed_at IS NOT NULL" in schema
 
 
 def test_schema_adds_page_language_metadata():
@@ -112,16 +112,7 @@ async def test_dense_query_accepts_immutable_embedding_sequence():
 
 class RowCursor:
     async def fetchall(self):
-        return [
-            (
-                7,
-                3,
-                "https://example.com/post",
-                "Post",
-                "matching content",
-                0.25,
-            )
-        ]
+        return [(7, 3, 0.25)]
 
 
 class RecordingConnection:
@@ -156,12 +147,15 @@ async def test_bm25_query_uses_search_vector_and_preserves_filter_params():
     assert rows[0].rank == 0.25
 
 
-class PageChunkCursor:
+class PageCursor:
     async def fetchall(self):
-        return [(3, "first three"), (3, "second three"), (5, "only five")]
+        return [
+            (3, "https://example.com/three", "Three", "full page three"),
+            (5, "https://example.com/five", None, "full page five"),
+        ]
 
 
-class PageChunkConnection:
+class PageConnection:
     def __init__(self) -> None:
         self.query = None
         self.params = None
@@ -169,21 +163,33 @@ class PageChunkConnection:
     async def execute(self, query, params):
         self.query = query
         self.params = params
-        return PageChunkCursor()
+        return PageCursor()
 
 
-async def test_page_chunk_lookup_groups_ordered_content():
-    conn = PageChunkConnection()
+async def test_page_lookup_returns_validated_canonical_content():
+    conn = PageConnection()
 
-    chunks = await fetch_page_chunks(cast(Any, conn), page_ids=(3, 5))
+    pages = await fetch_pages(cast(Any, conn), page_ids=(3, 5))
 
     assert conn.query is not None
-    assert "ORDER BY page_id, chunk_index" in conn.query
+    assert "SELECT id, url, title, content" in conn.query
+    assert "FROM pages" in conn.query
     assert conn.params == ([3, 5],)
-    assert chunks == {
-        3: ("first three", "second three"),
-        5: ("only five",),
-    }
+    assert pages[3].content == "full page three"
+    assert pages[5].title is None
+
+
+async def test_page_lookup_rejects_invalid_database_rows():
+    class InvalidPageCursor:
+        async def fetchall(self):
+            return [(True, "https://example.com", None, "content")]
+
+    class InvalidPageConnection:
+        async def execute(self, query, params):
+            return InvalidPageCursor()
+
+    with pytest.raises(ValueError, match="invalid page database row"):
+        await fetch_pages(cast(Any, InvalidPageConnection()), page_ids=(1,))
 
 
 class ActivityCursor:

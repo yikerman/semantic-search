@@ -105,6 +105,7 @@ async def test_job_state_update_reports_lost_lease():
 
 class ChunkCursor(AbstractAsyncContextManager):
     def __init__(self) -> None:
+        self.query = ""
         self.rows = []
 
     async def __aenter__(self):
@@ -114,6 +115,7 @@ class ChunkCursor(AbstractAsyncContextManager):
         return None
 
     async def executemany(self, query, rows):
+        self.query = query
         self.rows = rows
 
 
@@ -134,7 +136,44 @@ async def test_insert_page_chunks_never_replaces_existing_chunks():
     await db.insert_page_chunks(
         cast(Any, conn),
         page_id=3,
-        chunks=[db.ChunkInsert(0, "content", 7, (1.0, 0.0))],
+        chunks=[db.ChunkInsert(4, "content", (1.0, 0.0))],
     )
 
     assert len(conn.cur.rows) == 1
+    assert "(page_id, start_offset, content_length, embedding, search_vector)" in (
+        conn.cur.query
+    )
+    assert "to_tsvector('simple', %s)" in conn.cur.query
+    assert conn.cur.rows[0][1:3] == (4, 7)
+    assert conn.cur.rows[0][-1] == "content"
+
+
+class PageInsertConnection:
+    def __init__(self) -> None:
+        self.query = ""
+        self.params: tuple[object, ...] = ()
+
+    async def execute(self, query, params):
+        self.query = query
+        self.params = params
+        return Cursor((9,))
+
+
+async def test_insert_page_stores_canonical_content():
+    conn = PageInsertConnection()
+
+    page_id = await db.insert_page(
+        cast(Any, conn),
+        site_id=2,
+        url="https://example.com/post",
+        title="Post",
+        content="canonical article body",
+        published_at=None,
+        language="en",
+    )
+
+    assert page_id == 9
+    assert "(site_id, url, title, content, published_at, language, fetched_at)" in (
+        conn.query
+    )
+    assert conn.params[3] == "canonical article body"

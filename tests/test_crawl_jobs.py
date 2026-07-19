@@ -61,7 +61,7 @@ def processor(pool: Pool, fetch_page):
         pool=cast(Any, pool),
         fetch_page=fetch_page,
         embed_documents=embed,
-        chunker=lambda text: [Chunk(0, text, len(text))],
+        chunker=lambda text: [Chunk(0, text)],
     )
 
 
@@ -101,7 +101,9 @@ async def test_indexed_attempt_fences_before_atomic_page_and_chunk_writes(
         return True
 
     async def insert_page(conn, **kwargs):
-        assert conn.in_transaction and kwargs["language"] == "en"
+        assert conn.in_transaction
+        assert kwargs["language"] == "en"
+        assert kwargs["content"] == "body"
         writes.append("page")
         return 3
 

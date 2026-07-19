@@ -209,6 +209,7 @@ async def _ingest_crawl_attempt(
             site_id=attempt.site_id,
             url=attempt.url,
             title=page.title,
+            content=page.text,
             published_at=page.published_at,
             language=page.language,
         )
@@ -219,9 +220,8 @@ async def _ingest_crawl_attempt(
             page_id=page_id,
             chunks=[
                 db.ChunkInsert(
-                    chunk_index=chunk.chunk_index,
+                    start_offset=chunk.start_offset,
                     content=chunk.content,
-                    char_count=chunk.char_count,
                     embedding=vector,
                 )
                 for chunk, vector in zip(chunks, vectors, strict=True)

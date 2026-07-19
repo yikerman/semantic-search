@@ -18,8 +18,6 @@ from semsearch.web.search.models import (
 )
 from semsearch.web.search.pipeline import (
     aggregate_page_run,
-    compose_chunks,
-    compose_page_candidates,
     rerank_by_length,
     search,
 )
@@ -29,9 +27,6 @@ def chunk(chunk_id: int, page_id: int, **scores: float) -> ChunkCandidate:
     return ChunkCandidate(
         chunk_id=chunk_id,
         page_id=page_id,
-        url=f"https://blog.example/p{page_id}",
-        title=f"Post {page_id}",
-        content=f"chunk {chunk_id} of page {page_id}",
         scores=scores,
     )
 
@@ -98,23 +93,6 @@ def test_dense_run_contributes_double_weight_to_rrf():
 def test_rrf_rejects_run_without_explicit_weight():
     with pytest.raises(ValueError, match="missing RRF weight.*cross_encoder"):
         reciprocal_rank_fusion([page_run("cross_encoder", page(1))])
-
-
-def test_compose_chunks_removes_exact_overlap_and_separates_disjoint_chunks():
-    assert (
-        compose_chunks(["w0 w1 w2 w3", "w3 w4 w5 w6", "w6 w7"])
-        == "w0 w1 w2 w3 w4 w5 w6 w7"
-    )
-    assert compose_chunks(["alpha", "beta"]) == "alpha beta"
-    assert compose_chunks(["alpha", "again"]) == "alpha again"
-    assert compose_chunks([]) == ""
-
-
-def test_compose_page_candidates_requires_chunks_for_every_retrieved_page():
-    candidates = [chunk(1, 1, dense=0.9), chunk(2, 2, dense=0.8)]
-
-    with pytest.raises(ValueError, match="retrieved page 2 has no chunks"):
-        compose_page_candidates(candidates, {1: ("content",)})
 
 
 def test_page_run_rewards_top_three_chunk_scores_including_negative_scores():
@@ -198,11 +176,16 @@ async def test_search_materializes_and_fuses_unique_pages(monkeypatch):
     )
     bm25 = fake_retriever("bm25", [chunk(3, 2, bm25=2.0)], calls)
 
-    async def fetch_chunks(conn, *, page_ids):
+    async def fetch_pages(conn, *, page_ids):
         fetches.append((conn, page_ids))
-        return {1: ("alpha beta", "beta gamma"), 2: ("short",)}
+        return {
+            1: db.PageRecord(
+                1, "https://blog.example/p1", "Post 1", "alpha beta gamma"
+            ),
+            2: db.PageRecord(2, "https://blog.example/p2", "Post 2", "short"),
+        }
 
-    monkeypatch.setattr(db, "fetch_page_chunks", fetch_chunks)
+    monkeypatch.setattr(db, "fetch_pages", fetch_pages)
 
     results = await search(
         "query",

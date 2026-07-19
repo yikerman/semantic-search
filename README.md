@@ -38,33 +38,12 @@ uv run uvicorn semsearch.web.app:app --reload
 
 Check with `pyright`, `pytest`, `ruff` and `ty`.
 
-Apply migrations to an existing development database from the repository root:
-
-```sh
-docker compose exec -T db \
-  sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
-  < scripts/0000_a358487_add_status_indexes.sql
-uv run python scripts/0001_2bfa077_add_page_language.py
-```
-
 ## Deployment
 
 ```sh
 cp .env.example .env  # See .env.example for config keys
 docker compose up -d --build
 docker compose exec app /app/.venv/bin/semsearch init-db  # first run only
-```
-
-Migrations example:
-
-```sh
-# plain sql
-docker compose exec -T db \
-  sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
-  < scripts/0000_a358487_add_status_indexes.sql
-# or py backfills
-docker compose run --rm app \
-  /app/.venv/bin/python scripts/0001_2bfa077_add_page_language.py
 ```
 
 For an embedding server on the host, use
@@ -78,4 +57,5 @@ docker compose exec app /app/.venv/bin/semsearch status
 docker compose exec app /app/.venv/bin/python scripts/import_indieblog_feeds.py --dry-run
 ```
 
-Changing chunking algorithm, embedding dim or model requires re-indexing: TODO.
+Changing the chunking algorithm, embedding dimension, or model currently requires
+re-indexing.

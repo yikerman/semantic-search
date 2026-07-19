@@ -47,12 +47,13 @@ CREATE INDEX IF NOT EXISTS crawl_jobs_recent_failure_idx
     ON crawl_jobs (failed_at DESC, url)
     WHERE failed_at IS NOT NULL;
 
--- pages divided into several chunks
+-- canonical extracted pages divided into derived retrieval chunks
 CREATE TABLE IF NOT EXISTS pages (
     id bigserial PRIMARY KEY,
     site_id bigint NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
     url text UNIQUE NOT NULL,
     title text,
+    content text NOT NULL,
     published_at timestamptz,
     language text,
     fetched_at timestamptz NOT NULL
@@ -67,18 +68,15 @@ CREATE INDEX IF NOT EXISTS pages_language_idx
     ON pages (language)
     WHERE language IS NOT NULL;
 
--- each chunk hold an embedding
+-- each chunk identifies a span of its page and holds its retrieval data
 CREATE TABLE IF NOT EXISTS chunks (
     id bigserial PRIMARY KEY,
     page_id bigint NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-    chunk_index int NOT NULL,
-    content text NOT NULL,
-    char_count int NOT NULL,
+    start_offset int NOT NULL CHECK (start_offset >= 0),
+    content_length int NOT NULL CHECK (content_length > 0),
     embedding halfvec({embedding_dim}) NOT NULL,
-    search_vector tsvector GENERATED ALWAYS AS (
-        to_tsvector('simple', content)
-    ) STORED,
-    UNIQUE (page_id, chunk_index)
+    search_vector tsvector NOT NULL,
+    UNIQUE (page_id, start_offset)
 );
 
 CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw_idx

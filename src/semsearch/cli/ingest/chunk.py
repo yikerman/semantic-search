@@ -6,9 +6,8 @@ from tokenizers import Tokenizer
 
 @dataclass(frozen=True, slots=True)
 class Chunk:
-    chunk_index: int
+    start_offset: int
     content: str
-    char_count: int
 
 
 type Chunker = Callable[[str], list[Chunk]]
@@ -47,7 +46,7 @@ def token_chunks(
         start_char = encoding.offsets[start][0]
         end_char = encoding.offsets[end - 1][1]
         content = text[start_char:end_char]
-        chunks.append(Chunk(len(chunks), content, len(content)))
+        chunks.append(Chunk(start_char, content))
         if end == len(encoding.ids):
             break
         start = end - chunk_token_overlap

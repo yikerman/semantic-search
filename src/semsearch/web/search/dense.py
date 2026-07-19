@@ -22,9 +22,6 @@ async def retrieve_dense(
             ChunkCandidate(
                 chunk_id=row.chunk_id,
                 page_id=row.page_id,
-                url=row.url,
-                title=row.title,
-                content=row.content,
                 scores={"dense": row.similarity},
             )
             for row in rows

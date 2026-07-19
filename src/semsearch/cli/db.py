@@ -15,9 +15,8 @@ from semsearch.share.config import Settings
 
 @dataclass(frozen=True, slots=True)
 class ChunkInsert:
-    chunk_index: int
+    start_offset: int
     content: str
-    char_count: int
     embedding: Sequence[float]
 
 
@@ -443,6 +442,7 @@ async def insert_page(
     site_id: int,
     url: str,
     title: str | None,
+    content: str,
     published_at: datetime | None,
     language: str,
 ) -> int | None:
@@ -455,12 +455,12 @@ async def insert_page(
     cur = await conn.execute(
         """
         INSERT INTO pages
-            (site_id, url, title, published_at, language, fetched_at)
-        VALUES (%s, %s, %s, %s, %s, now())
+            (site_id, url, title, content, published_at, language, fetched_at)
+        VALUES (%s, %s, %s, %s, %s, %s, now())
         ON CONFLICT (url) DO NOTHING
         RETURNING id
         """,
-        (site_id, url, title, published_at, language),
+        (site_id, url, title, content, published_at, language),
     )
     row = await cur.fetchone()
     return None if row is None else row[0]
@@ -476,16 +476,16 @@ async def insert_page_chunks(
         await cur.executemany(
             """
             INSERT INTO chunks
-                (page_id, chunk_index, content, char_count, embedding)
-            VALUES (%s, %s, %s, %s, %s)
+                (page_id, start_offset, content_length, embedding, search_vector)
+            VALUES (%s, %s, %s, %s, to_tsvector('simple', %s))
             """,
             [
                 (
                     page_id,
-                    chunk.chunk_index,
-                    chunk.content,
-                    chunk.char_count,
+                    chunk.start_offset,
+                    len(chunk.content),
                     HalfVector(list(chunk.embedding)),
+                    chunk.content,
                 )
                 for chunk in chunks
             ],

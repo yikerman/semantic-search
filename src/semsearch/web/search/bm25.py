@@ -22,9 +22,6 @@ async def retrieve_bm25(
             ChunkCandidate(
                 chunk_id=row.chunk_id,
                 page_id=row.page_id,
-                url=row.url,
-                title=row.title,
-                content=row.content,
                 scores={"bm25": row.rank},
             )
             for row in rows
