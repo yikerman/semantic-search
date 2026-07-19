@@ -1,9 +1,10 @@
 [project]
 name = "semantic-search"
-version = "0.1.0a1"
+version = "0.2.0.dev0"
 description = "Embeddings-first search engine for indie blogs"
 readme = "README.md"
 requires-python = ">=3.14"
+classifiers = ["Private :: Do Not Upload"]
 dependencies = [
     "async-lru>=2.3.0",
     "curl-cffi>=0.15.0",
