@@ -73,6 +73,14 @@ def test_schema_adds_page_language_metadata():
     assert "WHERE language IS NOT NULL" in schema
 
 
+def test_schema_indexes_known_publication_dates():
+    schema = load_schema_sql(Settings(embedding_model="test-model", embedding_dim=2))
+
+    assert "pages_published_at_idx" in schema
+    assert "ON pages (published_at)" in schema
+    assert "WHERE published_at IS NOT NULL" in schema
+
+
 class EmptyCursor:
     async def fetchall(self):
         return []
@@ -150,8 +158,14 @@ async def test_bm25_query_uses_search_vector_and_preserves_filter_params():
 class PageCursor:
     async def fetchall(self):
         return [
-            (3, "https://example.com/three", "Three", "full page three"),
-            (5, "https://example.com/five", None, "full page five"),
+            (
+                3,
+                "https://example.com/three",
+                "Three",
+                "full page three",
+                datetime(2025, 1, 2, tzinfo=UTC),
+            ),
+            (5, "https://example.com/five", None, "full page five", None),
         ]
 
 
@@ -172,17 +186,32 @@ async def test_page_lookup_returns_validated_canonical_content():
     pages = await fetch_pages(cast(Any, conn), page_ids=(3, 5))
 
     assert conn.query is not None
-    assert "SELECT id, url, title, content" in conn.query
+    assert "SELECT id, url, title, content, published_at" in conn.query
     assert "FROM pages" in conn.query
     assert conn.params == ([3, 5],)
     assert pages[3].content == "full page three"
+    assert pages[3].published_at == datetime(2025, 1, 2, tzinfo=UTC)
     assert pages[5].title is None
+    assert pages[5].published_at is None
 
 
 async def test_page_lookup_rejects_invalid_database_rows():
     class InvalidPageCursor:
         async def fetchall(self):
             return [(True, "https://example.com", None, "content")]
+
+    class InvalidPageConnection:
+        async def execute(self, query, params):
+            return InvalidPageCursor()
+
+    with pytest.raises(ValueError, match="invalid page database row"):
+        await fetch_pages(cast(Any, InvalidPageConnection()), page_ids=(1,))
+
+
+async def test_page_lookup_rejects_naive_publication_timestamp():
+    class InvalidPageCursor:
+        async def fetchall(self):
+            return [(1, "https://example.com", None, "content", datetime(2025, 1, 2))]
 
     class InvalidPageConnection:
         async def execute(self, query, params):

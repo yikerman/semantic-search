@@ -17,6 +17,14 @@
         {% endfor %}
       </select>
     </label>
+    <label class="search-date" for="published-from">
+      <span>Published from</span>
+      <input id="published-from" type="date" name="published_from" value="{{ published_from }}">
+    </label>
+    <label class="search-date" for="published-to">
+      <span>Published to</span>
+      <input id="published-to" type="date" name="published_to" value="{{ published_to }}">
+    </label>
     <label class="search-option">
       <input type="checkbox" name="encourage_long_content" value="true" {% if encourage_long_content %}checked{% endif
         %}>
@@ -41,6 +49,10 @@
           <h3><a href="{{ result.url }}">{{ result.title or result.url }}</a></h3>
           <p class="result-meta">
             {{ result.url }}
+            {% if result.published_date %}
+            &middot; Published <time datetime="{{ result.published_date.isoformat() }}">{{ result.published_date.isoformat()
+              }}</time>
+            {% endif %}
             &middot; rrf {{ "%.6f" | format(result.scores["rrf"]) }}
             {% for name, score in result.scores.items() if name != "rrf" %}
             {% if name == "length" %}

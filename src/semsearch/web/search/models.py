@@ -1,5 +1,6 @@
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from types import MappingProxyType
 
 from psycopg_pool import AsyncConnectionPool
@@ -26,6 +27,7 @@ class PageCandidate:
     url: str
     title: str | None
     content: str
+    published_at: datetime | None = None
     scores: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

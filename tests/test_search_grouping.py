@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import pytest
@@ -180,9 +181,13 @@ async def test_search_materializes_and_fuses_unique_pages(monkeypatch):
         fetches.append((conn, page_ids))
         return {
             1: db.PageRecord(
-                1, "https://blog.example/p1", "Post 1", "alpha beta gamma"
+                1,
+                "https://blog.example/p1",
+                "Post 1",
+                "alpha beta gamma",
+                datetime(2025, 1, 2, tzinfo=UTC),
             ),
-            2: db.PageRecord(2, "https://blog.example/p2", "Post 2", "short"),
+            2: db.PageRecord(2, "https://blog.example/p2", "Post 2", "short", None),
         }
 
     monkeypatch.setattr(db, "fetch_pages", fetch_pages)
@@ -203,5 +208,7 @@ async def test_search_materializes_and_fuses_unique_pages(monkeypatch):
     assert [result.page_id for result in results] == [2, 1]
     assert len({result.page_id for result in results}) == len(results)
     assert results[1].content == "alpha beta gamma"
+    assert results[1].published_at == datetime(2025, 1, 2, tzinfo=UTC)
+    assert results[0].published_at is None
     assert results[1].scores["dense"] == pytest.approx(0.98)
     assert "length" not in results[0].scores

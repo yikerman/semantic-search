@@ -1,6 +1,7 @@
 from collections.abc import Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import UTC, date
 from functools import partial
 import logging
 from pathlib import Path
@@ -19,11 +20,14 @@ from semsearch.share.embeddings import EmbeddingError, create_embeddings
 from semsearch.share.logging import configure_logging
 from semsearch.share.status import fetch_index_stats
 from semsearch.web.db import list_available_languages, list_recent_activity, ping
-from semsearch.web.search.bm25 import retrieve_bm25
-from semsearch.web.search.dense import retrieve_dense
+from semsearch.web.search.filters import (
+    SearchFilter,
+    filter_by_language,
+    filter_by_published_range,
+)
 from semsearch.web.search.models import PageCandidate
 from semsearch.web.search.pipeline import rerank_by_length, search
-from semsearch.web.search.filters import filter_by_language
+from semsearch.web.search.retrievers import retrieve_bm25, retrieve_dense
 
 # Configure at import time: uvicorn loads this module before it logs its own
 # startup lines, so even those render through our handler.
@@ -40,6 +44,7 @@ class DisplayResult:
     title: str | None
     snippet: str
     is_truncated: bool
+    published_date: date | None
     scores: Mapping[str, float]
 
 
@@ -52,6 +57,28 @@ def prepare_language_options(
     return sorted(codes)
 
 
+def parse_published_range(
+    published_from: str, published_to: str
+) -> tuple[date | None, date | None]:
+    try:
+        start = _parse_published_date(published_from)
+        end = _parse_published_date(published_to)
+    except ValueError as exc:
+        raise ValueError("Published dates must use YYYY-MM-DD.") from exc
+    if start is not None and end is not None and start > end:
+        raise ValueError("Published from must be on or before Published to.")
+    return start, end
+
+
+def _parse_published_date(value: str) -> date | None:
+    if not value:
+        return None
+    parsed = date.fromisoformat(value)
+    if parsed.isoformat() != value:
+        raise ValueError("date is not in canonical ISO format")
+    return parsed
+
+
 def prepare_display(results: Sequence[PageCandidate]) -> list[DisplayResult]:
     return [
         DisplayResult(
@@ -60,6 +87,11 @@ def prepare_display(results: Sequence[PageCandidate]) -> list[DisplayResult]:
             title=result.title,
             snippet=result.content[:500],
             is_truncated=len(result.content) > 500,
+            published_date=(
+                result.published_at.astimezone(UTC).date()
+                if result.published_at is not None
+                else None
+            ),
             scores=result.scores,
         )
         for result in results
@@ -106,6 +138,8 @@ def create_app() -> FastAPI:
         q: str = "",
         encourage_long_content: bool = False,
         lang: Annotated[str | None, Query(pattern=r"^(?:[A-Za-z]{2})?$")] = None,
+        published_from: str = "",
+        published_to: str = "",
     ):
         results = None
         error = None
@@ -113,20 +147,27 @@ def create_app() -> FastAPI:
         query = q.strip()
         selected_language = lang.lower() if lang else None
         available_languages = await request.app.state.list_available_languages()
-        if query:
+        range_start: date | None = None
+        range_end: date | None = None
+        try:
+            range_start, range_end = parse_published_range(published_from, published_to)
+        except ValueError as exc:
+            error = str(exc)
+            status_code = http_status.HTTP_422_UNPROCESSABLE_CONTENT
+        if query and error is None:
             rerankers = (rerank_by_length,) if encourage_long_content else ()
-            filters = (
-                (filter_by_language(selected_language),)
-                if selected_language is not None
-                else ()
-            )
+            filters: list[SearchFilter] = []
+            if selected_language is not None:
+                filters.append(filter_by_language(selected_language))
+            if range_start is not None or range_end is not None:
+                filters.append(filter_by_published_range(range_start, range_end))
             run_search = partial(
                 search,
                 pool=request.app.state.pool,
                 embed_query=request.app.state.embed_query,
                 retrievers=(retrieve_dense, retrieve_bm25),
                 rerankers=rerankers,
-                filters=filters,
+                filters=tuple(filters),
             )
             started_at = perf_counter()
             try:
@@ -152,6 +193,8 @@ def create_app() -> FastAPI:
                 "q": q,
                 "encourage_long_content": encourage_long_content,
                 "lang": selected_language or "",
+                "published_from": published_from,
+                "published_to": published_to,
                 "languages": prepare_language_options(
                     available_languages, selected=selected_language
                 ),

@@ -136,7 +136,8 @@ button:hover {
 }
 
 .search-option,
-.search-language {
+.search-language,
+.search-date {
   display: flex;
   align-items: center;
   width: fit-content;
@@ -145,7 +146,8 @@ button:hover {
   font-size: 0.9rem;
 }
 
-.search-language select {
+.search-language select,
+.search-date input {
   min-height: 2rem;
   padding: 0.25rem 1.8rem 0.25rem 0.5rem;
   border: 1px solid #aebabc;

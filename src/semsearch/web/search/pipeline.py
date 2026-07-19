@@ -88,6 +88,7 @@ async def search(
             url=record.url,
             title=record.title,
             content=record.content,
+            published_at=record.published_at,
         )
         for page_id, record in page_records.items()
     }

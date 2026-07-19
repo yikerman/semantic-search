@@ -30,6 +30,7 @@ class PageRecord:
     url: str
     title: str | None
     content: str
+    published_at: datetime | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,18 +43,25 @@ class RecentActivity:
 
 
 def _page_record_from_row(row: tuple[object, ...]) -> PageRecord:
-    if len(row) != 4:
+    if len(row) != 5:
         raise ValueError("invalid page database row")
-    page_id, url, title, content = row
+    page_id, url, title, content, published_at = row
     if (
         not isinstance(page_id, int)
         or isinstance(page_id, bool)
         or not isinstance(url, str)
         or (title is not None and not isinstance(title, str))
         or not isinstance(content, str)
+        or (
+            published_at is not None
+            and (
+                not isinstance(published_at, datetime)
+                or published_at.utcoffset() is None
+            )
+        )
     ):
         raise ValueError("invalid page database row")
-    return PageRecord(page_id, url, title, content)
+    return PageRecord(page_id, url, title, content, published_at)
 
 
 def _dense_candidate_from_row(row: tuple[object, ...]) -> DenseCandidateRecord:
@@ -145,7 +153,7 @@ async def fetch_pages(
 ) -> dict[int, PageRecord]:
     cur = await conn.execute(
         """
-        SELECT id, url, title, content
+        SELECT id, url, title, content, published_at
         FROM pages
         WHERE id = ANY(%s)
         """,

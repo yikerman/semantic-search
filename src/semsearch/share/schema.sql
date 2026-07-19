@@ -64,6 +64,10 @@ CREATE INDEX IF NOT EXISTS pages_site_idx ON pages (site_id);
 CREATE INDEX IF NOT EXISTS pages_recent_idx
     ON pages (fetched_at DESC, url);
 
+CREATE INDEX IF NOT EXISTS pages_published_at_idx
+    ON pages (published_at)
+    WHERE published_at IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS pages_language_idx
     ON pages (language)
     WHERE language IS NOT NULL;

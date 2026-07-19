@@ -1,7 +1,8 @@
 from contextlib import AbstractAsyncContextManager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import httpx
+import pytest
 import semsearch.cli.app as cli_module
 from typer.testing import CliRunner
 
@@ -10,6 +11,7 @@ from semsearch.share.status import IndexStats
 from semsearch.web.app import (
     DisplayResult,
     create_app,
+    parse_published_range,
     prepare_display,
     prepare_language_options,
     templates,
@@ -48,6 +50,8 @@ def test_web_template_shows_scores_with_shared_semantic_structure():
         q="query",
         encourage_long_content=True,
         lang="fr",
+        published_from="2025-01-01",
+        published_to="2025-12-31",
         languages=["en", "fr"],
         error="Embedding service unavailable",
         results=[
@@ -57,6 +61,7 @@ def test_web_template_shows_scores_with_shared_semantic_structure():
                 title="Post",
                 snippet="Snippet",
                 is_truncated=False,
+                published_date=date(2025, 6, 7),
                 scores={
                     "dense": 0.8765,
                     "length": 12_345,
@@ -77,10 +82,13 @@ def test_web_template_shows_scores_with_shared_semantic_structure():
     assert '<label class="visually-hidden" for="query">' in html
     assert 'name="encourage_long_content" value="true"' in html
     assert '<select id="language" name="lang">' in html
+    assert 'name="published_from" value="2025-01-01"' in html
+    assert 'name="published_to" value="2025-12-31"' in html
     assert '<option value="fr" selected>fr</option>' in html
     assert "checked" in html
     assert '<p class="error" role="alert">' in html
     assert '<article class="result">' in html
+    assert 'Published <time datetime="2025-06-07">2025-06-07</time>' in html
     assert "<style" not in html
 
 
@@ -88,6 +96,18 @@ def test_language_options_are_sorted_and_preserve_unknown_selection():
     options = prepare_language_options(["fr", "en"], selected="zz")
 
     assert options == ["en", "fr", "zz"]
+
+
+def test_published_range_parses_optional_iso_dates():
+    assert parse_published_range("2025-01-02", "") == (date(2025, 1, 2), None)
+    assert parse_published_range("", "2025-03-04") == (None, date(2025, 3, 4))
+
+
+def test_published_range_rejects_malformed_and_reversed_dates():
+    with pytest.raises(ValueError, match="must use YYYY-MM-DD"):
+        parse_published_range("20250102", "")
+    with pytest.raises(ValueError, match="must be on or before"):
+        parse_published_range("2025-03-04", "2025-01-02")
 
 
 class FakeConnection(AbstractAsyncContextManager):
@@ -110,6 +130,7 @@ def test_prepare_display_extracts_bounded_page_lead():
             url="https://example.com/a",
             title="A",
             content="x" * 501,
+            published_at=datetime(2025, 1, 2, 23, 0, tzinfo=UTC),
             scores={"rrf": 0.5},
         ),
         PageCandidate(
@@ -125,8 +146,10 @@ def test_prepare_display_extracts_bounded_page_lead():
 
     assert displayed[0].snippet == "x" * 500
     assert displayed[0].is_truncated is True
+    assert displayed[0].published_date == date(2025, 1, 2)
     assert displayed[1].snippet == "short page"
     assert displayed[1].is_truncated is False
+    assert displayed[1].published_date is None
     assert displayed[0].scores["rrf"] == 0.5
 
 
