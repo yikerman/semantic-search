@@ -7,3 +7,4 @@
 5. Moderation: honor code? public submission?
 6. Site quality votes: human voting as site quality and reputation?
 7. More sophisticated chunk score aggregate?
+8. Respect robots.txt

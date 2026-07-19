@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql://semsearch:semsearch@localhost:5432/semsearch"
-    database_pool_max_size: Annotated[int, Field(ge=2)] = 20
+    database_pool_max_size: Annotated[int, Field(ge=2)] = 40
     log_level: LogLevel = "INFO"
 
     embedding_api_base: str = "https://openrouter.ai/api/v1"
@@ -27,14 +27,12 @@ class Settings(BaseSettings):
         "5cf2132abc99cad020ac570b19d031efec650f2b"
     )
 
-    query_instruction: str = (
-        "Given a web search query, retrieve relevant passages that answer the query"
-    )
+    query_instruction: str = "Given search query, retrieve relevant passages"
 
     chunk_tokens: Annotated[int, Field(gt=0)] = 384
-    chunk_token_overlap: Annotated[int, Field(ge=0)] = 64
+    chunk_token_overlap: Annotated[int, Field(ge=0)] = 32
 
-    fetch_delay_seconds: Annotated[float, Field(ge=0)] = 1.0
+    fetch_delay_seconds: Annotated[float, Field(ge=0)] = 2.0
     fetch_timeout_seconds: Annotated[float, Field(gt=0)] = 20.0
     fetch_concurrency: Annotated[int, Field(gt=0)] = 16
     fetch_impersonate: str = "chrome"
@@ -42,7 +40,7 @@ class Settings(BaseSettings):
 
     site_poll_interval_seconds: Annotated[int, Field(gt=0)] = 43_200
     site_poll_concurrency: Annotated[int, Field(gt=0)] = 16
-    ingest_concurrency: Annotated[int, Field(gt=0)] = 4
+    ingest_concurrency: Annotated[int, Field(gt=0)] = 8
     history_post_limit: Annotated[int, Field(gt=0)] = 2000
 
     @model_validator(mode="after")
