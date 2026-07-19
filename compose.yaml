@@ -13,10 +13,10 @@ services:
       - ${PGDATA_DIR:-pgdata}:/var/lib/postgresql
     healthcheck:
       # $$ defers expansion to the container shell, where POSTGRES_* are set.
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+      test: ["CMD-SHELL", "exec pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -t 10"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
 
   app:
     restart: unless-stopped
