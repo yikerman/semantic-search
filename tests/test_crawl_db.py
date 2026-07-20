@@ -8,12 +8,16 @@ from semsearch.cli import db
 
 
 class Cursor:
-    def __init__(self, row=None, *, rowcount: int = 1) -> None:
+    def __init__(self, row=None, *, rows=None, rowcount: int = 1) -> None:
         self.row = row
+        self.rows = rows or []
         self.rowcount = rowcount
 
     async def fetchone(self):
         return self.row
+
+    async def fetchall(self):
+        return self.rows
 
 
 class ClaimConnection:
@@ -47,6 +51,30 @@ async def test_claim_crawl_job_can_exclude_sites():
     assert job is not None
     assert "site_id != ALL(%s::bigint[])" in conn.query
     assert conn.params[0] == [4, 9]
+
+
+async def test_delete_site_configs_deletes_origins_in_one_statement():
+    class DeleteConnection:
+        def __init__(self) -> None:
+            self.query = ""
+            self.params = ()
+
+        async def execute(self, query, params):
+            self.query = query
+            self.params = params
+            return Cursor(rows=[("https://b.example",), ("https://a.example",)])
+
+    conn = DeleteConnection()
+
+    removed = await db.delete_site_configs(
+        cast(Any, conn),
+        base_urls=("https://a.example", "https://b.example"),
+    )
+
+    assert "DELETE FROM sites" in conn.query
+    assert "RETURNING base_url" in conn.query
+    assert conn.params == (["https://a.example", "https://b.example"],)
+    assert removed == ["https://a.example", "https://b.example"]
 
 
 class InvalidClaimConnection:

@@ -12,7 +12,12 @@ import typer
 from psycopg_pool import AsyncConnectionPool
 
 from semsearch.cli import db
-from semsearch.cli.daemon import DaemonAlreadyRunningError, run_daemon
+from semsearch.cli.daemon import (
+    DAEMON_LOCK_ID,
+    DaemonAlreadyRunningError,
+    advisory_lock,
+    run_daemon,
+)
 from semsearch.cli.ingest.chunk import (
     TokenizerError,
     load_tokenizer,
@@ -21,7 +26,7 @@ from semsearch.cli.ingest.chunk import (
 from semsearch.cli.ingest.feed import FeedError
 from semsearch.cli.ingest.fetch import FetchError, Fetcher, create_fetcher
 from semsearch.cli.models import Site
-from semsearch.cli.sites import SiteError, add_site, list_sites
+from semsearch.cli.sites import SiteError, add_site, list_sites, remove_site
 from semsearch.share.config import Settings, get_settings
 from semsearch.share.db import create_pool
 from semsearch.share.embeddings import (
@@ -137,6 +142,19 @@ def site_list() -> None:
         return
     for record in records:
         _echo_site(record)
+
+
+@site_app.command("remove")
+def site_remove(url: str) -> None:
+    """Remove a configured site and all of its stored data."""
+
+    async def _remove() -> str:
+        settings = get_settings()
+        async with create_pool(settings) as pool:
+            async with advisory_lock(pool, DAEMON_LOCK_ID):
+                return await remove_site(pool, url)
+
+    typer.echo(f"Removed {run(_remove())}")
 
 
 @app.command()

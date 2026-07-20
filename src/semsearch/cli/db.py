@@ -107,6 +107,27 @@ async def list_site_configs(conn: psycopg.AsyncConnection) -> list[Site]:
     return [Site(**row) for row in await cur.fetchall()]
 
 
+async def delete_site_configs(
+    conn: psycopg.AsyncConnection, *, base_urls: Sequence[str]
+) -> list[str]:
+    if not base_urls:
+        return []
+    cur = await conn.execute(
+        "DELETE FROM sites WHERE base_url = ANY(%s) RETURNING base_url",
+        (list(base_urls),),
+    )
+    rows = await cur.fetchall()
+    if any(
+        not isinstance(row, Sequence)
+        or isinstance(row, (str, bytes))
+        or len(row) != 1
+        or not isinstance(row[0], str)
+        for row in rows
+    ):
+        raise ValueError("invalid deleted site database row")
+    return sorted(row[0] for row in rows)
+
+
 async def known_urls(conn: psycopg.AsyncConnection, urls: Sequence[str]) -> set[str]:
     if not urls:
         return set()

@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
 from uuid import UUID
@@ -84,6 +85,24 @@ async def add_site(
 async def list_sites(pool: AsyncConnectionPool) -> list[Site]:
     async with pool.connection() as conn:
         return await db.list_site_configs(conn)
+
+
+async def remove_site(pool: AsyncConnectionPool, url: str) -> str:
+    try:
+        base_url = normalize_origin(url)
+    except ValueError as exc:
+        raise SiteError(str(exc)) from exc
+    removed = await remove_sites(pool, (base_url,))
+    if not removed:
+        raise SiteError(f"Site is not configured: {base_url}")
+    return removed[0]
+
+
+async def remove_sites(
+    pool: AsyncConnectionPool, base_urls: Sequence[str]
+) -> list[str]:
+    async with pool.connection() as conn, conn.transaction():
+        return await db.delete_site_configs(conn, base_urls=base_urls)
 
 
 async def poll_site_record(

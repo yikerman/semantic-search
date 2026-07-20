@@ -32,6 +32,7 @@ cp .env.example .env  # set EMBEDDING_API_KEY before indexing
 uv run semsearch init-db
 # manually add a site. note that feed is mandatory
 uv run semsearch site add https://some.blog/ --sitemap auto --feed auto
+uv run semsearch site remove https://some.blog/
 uv run semsearch daemon &  # long-running polling and ingestion process
 uv run uvicorn semsearch.web.app:app --reload
 ```
