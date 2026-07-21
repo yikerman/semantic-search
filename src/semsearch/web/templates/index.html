@@ -50,8 +50,7 @@
           <p class="result-meta">
             {{ result.url }}
             {% if result.published_date %}
-            &middot; Published <time datetime="{{ result.published_date.isoformat() }}">
-              {{result.published_date.isoformat()}}</time>
+            &middot; Published <time datetime="{{ result.published_date.isoformat() }}">{{ result.published_date.isoformat() }}</time>
             {% endif %}
             &middot; rrf {{ "%.6f" | format(result.scores["rrf"]) }}
             {% for name, score in result.scores.items() if name != "rrf" %}
