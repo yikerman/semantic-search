@@ -4,7 +4,7 @@ from types import MappingProxyType
 from semsearch.web.search.models import ChunkCandidate, PageCandidate, RankedRun
 
 RUN_WEIGHTS: Mapping[str, float] = MappingProxyType(
-    {"dense": 2.0, "bm25": 1.0, "length": 1.0}
+    {"dense": 2.0, "bm25": 0.5, "length": 1.0}
 )
 
 

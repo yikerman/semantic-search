@@ -1,10 +1,10 @@
 # semsearch
 
-*Current status: PoC*
+*Current status: PoC, towards prod*
 
 ## Goal
 
-Semsearch is an embedding-focused indexing and search engine (ideas heavily borrowed from agentic AI RAG architecture) that aims to aggregate indie blogs.
+Semsearch is an embedding-focused indexing and search engine (ideas heavily borrowed from agentic AI RAG architecture) that aims to aggregate and promote indie blogs.
 
 ## Implementation
 
@@ -58,9 +58,4 @@ docker compose exec app /app/.venv/bin/semsearch status
 docker compose exec app /app/.venv/bin/python scripts/import_indieblog_feeds.py --dry-run
 ```
 
-Changing the chunking algorithm, embedding dimension, or model currently requires
-re-indexing.
-
-## Note
-
-Development is AI-assisted.
+Changing the chunking algorithm, embedding dimension, or model requires re-indexing. TODO
