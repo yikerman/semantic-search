@@ -8,7 +8,8 @@ preview the candidates.
 `migrate_to_vchord_bm25.py` performs the one-time offline migration from the
 old `tsvector` schema to VectorChord BM25. Stop the web app, daemon, and all
 other database clients first. The script requires an exported absolute
-`PGDATA_DIR` and a new absolute backup directory:
+`PGDATA_DIR`, Docker with the Compose plugin, and a new absolute backup
+directory:
 
 ```sh
 export PGDATA_DIR=/mnt/nvme/semsearch-pg

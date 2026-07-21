@@ -9,7 +9,7 @@ from pathlib import Path
 
 from semsearch.share.config import get_settings
 
-COMPOSE = ["podman", "compose"]
+COMPOSE = ["docker", "compose"]
 TOKENIZER = "semsearch_llmlingua2"
 
 
@@ -122,7 +122,7 @@ def _validated_paths(backup_arg: Path) -> tuple[Path, Path]:
 
 
 def _require_tools() -> None:
-    missing = [name for name in ("mv", "podman", "uv") if shutil.which(name) is None]
+    missing = [name for name in ("docker", "mv", "uv") if shutil.which(name) is None]
     if missing:
         raise MigrationError(f"missing required command(s): {', '.join(missing)}")
 
