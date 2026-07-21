@@ -1,7 +1,7 @@
 services:
   db:
     restart: unless-stopped
-    image: docker.io/pgvector/pgvector:pg18-trixie
+    image: docker.io/tensorchord/vchord-suite:pg18-20260501
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-semsearch}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-semsearch}

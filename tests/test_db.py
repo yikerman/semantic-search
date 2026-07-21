@@ -24,24 +24,35 @@ def test_schema_uses_halfvec_hnsw_cosine_index():
     assert "index_meta" not in schema
 
 
+def test_schema_initializes_vectorchord_bm25_once():
+    schema = load_schema_sql(Settings(embedding_model="test-model", embedding_dim=2))
+
+    assert "CREATE EXTENSION vector;" in schema
+    assert "CREATE EXTENSION pg_tokenizer CASCADE;" in schema
+    assert "CREATE EXTENSION vchord_bm25 CASCADE;" in schema
+    assert "create_tokenizer('semsearch_llmlingua2'" in schema
+    assert 'model = "llmlingua2"' in schema
+    assert "IF NOT EXISTS" not in schema
+
+
 def test_schema_keeps_canonical_page_content_and_derived_chunk_spans():
     schema = load_schema_sql(Settings(embedding_model="test-model", embedding_dim=2))
-    chunks = schema.split("CREATE TABLE IF NOT EXISTS chunks", 1)[1].split(");", 1)[0]
+    chunks = schema.split("CREATE TABLE chunks", 1)[1].split(");", 1)[0]
 
     assert "content text NOT NULL" in schema
     assert "start_offset int NOT NULL CHECK (start_offset >= 0)" in chunks
     assert "content_length int NOT NULL CHECK (content_length > 0)" in chunks
-    assert "search_vector tsvector NOT NULL" in chunks
+    assert "search_vector bm25vector NOT NULL" in chunks
     assert "UNIQUE (page_id, start_offset)" in chunks
     assert "content text" not in chunks
     assert "GENERATED ALWAYS" not in chunks
-    assert "USING gin (search_vector)" in schema
+    assert "USING bm25 (search_vector bm25_ops)" in schema
 
 
 def test_schema_adds_durable_crawl_and_poll_state():
     schema = load_schema_sql(Settings(embedding_model="test-model", embedding_dim=2))
 
-    assert "CREATE TABLE IF NOT EXISTS crawl_jobs" in schema
+    assert "CREATE TABLE crawl_jobs" in schema
     assert "url text UNIQUE NOT NULL" in schema
     assert "next_poll_at timestamptz" in schema
     assert "history_pending boolean NOT NULL DEFAULT false" in schema
@@ -134,7 +145,7 @@ class RecordingConnection:
         return RowCursor()
 
 
-async def test_bm25_query_uses_search_vector_and_preserves_filter_params():
+async def test_bm25_query_uses_vectorchord_and_preserves_filter_params():
     conn = RecordingConnection()
 
     rows = await fetch_bm25_candidate_rows(
@@ -146,9 +157,12 @@ async def test_bm25_query_uses_search_vector_and_preserves_filter_params():
 
     assert conn.query is not None
     query = conn.query.as_string()
-    assert "websearch_to_tsquery('simple', %s)" in query
-    assert "c.search_vector @@ search_query.value" in query
-    assert "ts_rank_cd(c.search_vector, search_query.value)" in query
+    assert "to_bm25query(" in query
+    assert "'chunks_search_vector_bm25_idx'::regclass" in query
+    assert "tokenize(%s, 'semsearch_llmlingua2')::bm25vector" in query
+    assert "-(c.search_vector <&> search_query.value) AS rank" in query
+    assert "ORDER BY c.search_vector <&> search_query.value" in query
+    assert "ORDER BY rank DESC" not in query
     assert "p.site_id = %s" in query
     assert conn.params == ('postgres "full text"', 3, 12)
     assert rows[0].chunk_id == 7

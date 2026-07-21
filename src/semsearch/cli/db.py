@@ -498,7 +498,10 @@ async def insert_page_chunks(
             """
             INSERT INTO chunks
                 (page_id, start_offset, content_length, embedding, search_vector)
-            VALUES (%s, %s, %s, %s, to_tsvector('simple', %s))
+            VALUES (
+                %s, %s, %s, %s,
+                tokenize(%s, 'semsearch_llmlingua2')::bm25vector
+            )
             """,
             [
                 (

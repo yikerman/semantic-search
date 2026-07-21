@@ -91,7 +91,7 @@ def run(coro: Coroutine[Any, Any, Any]) -> Any:
 
 @app.command("init-db")
 def init_db() -> None:
-    """Apply the schema."""
+    """Initialize an empty database."""
 
     async def _init() -> None:
         settings = get_settings()

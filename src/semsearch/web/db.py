@@ -222,16 +222,18 @@ async def fetch_bm25_candidate_rows(
         sql.SQL(
             """
         WITH search_query AS (
-            SELECT websearch_to_tsquery('simple', %s) AS value
+            SELECT to_bm25query(
+                'chunks_search_vector_bm25_idx'::regclass,
+                tokenize(%s, 'semsearch_llmlingua2')::bm25vector
+            ) AS value
         )
         SELECT c.id, c.page_id,
-               ts_rank_cd(c.search_vector, search_query.value) AS rank
+               -(c.search_vector <&> search_query.value) AS rank
         FROM chunks c
         JOIN pages p ON p.id = c.page_id
         CROSS JOIN search_query
-        WHERE c.search_vector @@ search_query.value
-          AND {predicate}
-        ORDER BY rank DESC, c.id
+        WHERE {predicate}
+        ORDER BY c.search_vector <&> search_query.value
         LIMIT %s
         """
         ).format(predicate=predicate.clause),

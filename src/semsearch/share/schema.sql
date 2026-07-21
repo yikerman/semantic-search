@@ -1,7 +1,13 @@
-CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION vector;
+CREATE EXTENSION pg_tokenizer CASCADE;
+CREATE EXTENSION vchord_bm25 CASCADE;
+
+SELECT create_tokenizer('semsearch_llmlingua2', $$
+model = "llmlingua2"
+$$);
 
 -- a site with several pages
-CREATE TABLE IF NOT EXISTS sites (
+CREATE TABLE sites (
     id bigserial PRIMARY KEY,
     base_url text UNIQUE NOT NULL,
     sitemap_url text,
@@ -19,10 +25,10 @@ CREATE TABLE IF NOT EXISTS sites (
     added_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS sites_next_poll_idx ON sites (next_poll_at);
+CREATE INDEX sites_next_poll_idx ON sites (next_poll_at);
 
 -- a site has several to-crawl pages
-CREATE TABLE IF NOT EXISTS crawl_jobs (
+CREATE TABLE crawl_jobs (
     id bigserial PRIMARY KEY,
     site_id bigint NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
     url text UNIQUE NOT NULL,
@@ -36,19 +42,19 @@ CREATE TABLE IF NOT EXISTS crawl_jobs (
     discovered_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS crawl_jobs_ready_idx
+CREATE INDEX crawl_jobs_ready_idx
     ON crawl_jobs (next_attempt_at, lease_until)
     WHERE next_attempt_at IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS crawl_jobs_site_idx
+CREATE INDEX crawl_jobs_site_idx
     ON crawl_jobs (site_id, next_attempt_at);
 
-CREATE INDEX IF NOT EXISTS crawl_jobs_recent_failure_idx
+CREATE INDEX crawl_jobs_recent_failure_idx
     ON crawl_jobs (failed_at DESC, url)
     WHERE failed_at IS NOT NULL;
 
 -- canonical extracted pages divided into derived retrieval chunks
-CREATE TABLE IF NOT EXISTS pages (
+CREATE TABLE pages (
     id bigserial PRIMARY KEY,
     site_id bigint NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
     url text UNIQUE NOT NULL,
@@ -59,32 +65,32 @@ CREATE TABLE IF NOT EXISTS pages (
     fetched_at timestamptz NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS pages_site_idx ON pages (site_id);
+CREATE INDEX pages_site_idx ON pages (site_id);
 
-CREATE INDEX IF NOT EXISTS pages_recent_idx
+CREATE INDEX pages_recent_idx
     ON pages (fetched_at DESC, url);
 
-CREATE INDEX IF NOT EXISTS pages_published_at_idx
+CREATE INDEX pages_published_at_idx
     ON pages (published_at)
     WHERE published_at IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS pages_language_idx
+CREATE INDEX pages_language_idx
     ON pages (language)
     WHERE language IS NOT NULL;
 
 -- each chunk identifies a span of its page and holds its retrieval data
-CREATE TABLE IF NOT EXISTS chunks (
+CREATE TABLE chunks (
     id bigserial PRIMARY KEY,
     page_id bigint NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
     start_offset int NOT NULL CHECK (start_offset >= 0),
     content_length int NOT NULL CHECK (content_length > 0),
     embedding halfvec({embedding_dim}) NOT NULL,
-    search_vector tsvector NOT NULL,
+    search_vector bm25vector NOT NULL,
     UNIQUE (page_id, start_offset)
 );
 
-CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw_idx
+CREATE INDEX chunks_embedding_hnsw_idx
     ON chunks USING hnsw (embedding halfvec_cosine_ops);
 
-CREATE INDEX IF NOT EXISTS chunks_search_vector_gin_idx
-    ON chunks USING gin (search_vector);
+CREATE INDEX chunks_search_vector_bm25_idx
+    ON chunks USING bm25 (search_vector bm25_ops);

@@ -171,7 +171,7 @@ async def test_insert_page_chunks_never_replaces_existing_chunks():
     assert "(page_id, start_offset, content_length, embedding, search_vector)" in (
         conn.cur.query
     )
-    assert "to_tsvector('simple', %s)" in conn.cur.query
+    assert "tokenize(%s, 'semsearch_llmlingua2')::bm25vector" in conn.cur.query
     assert conn.cur.rows[0][1:3] == (4, 7)
     assert conn.cur.rows[0][-1] == "content"
 
