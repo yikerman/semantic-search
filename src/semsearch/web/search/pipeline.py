@@ -19,6 +19,7 @@ from semsearch.web.search.models import (
     Reranker,
     RetrievalRequest,
     Retriever,
+    make_run,
 )
 
 
@@ -31,27 +32,29 @@ def aggregate_page_run(
             candidate.scores[run.name]
         )
 
-    candidates = []
-    for page_id, native_scores in scores_by_page.items():
+    def aggregate(native_scores: list[float]) -> float:
         top_scores = sorted(native_scores, reverse=True)[:3]
-        aggregate = sum(score * (0.1**index) for index, score in enumerate(top_scores))
-        candidates.append(pages[page_id].with_scores({run.name: aggregate}))
-    candidates.sort(key=lambda candidate: candidate.scores[run.name], reverse=True)
-    return RankedRun(run.name, tuple(candidates))
+        return sum(score * (0.1**index) for index, score in enumerate(top_scores))
+
+    return make_run(
+        run.name,
+        run.weight,
+        (
+            (pages[page_id], aggregate(native_scores))
+            for page_id, native_scores in scores_by_page.items()
+        ),
+    )
 
 
 async def rerank_by_length(
     query: str, candidates: Sequence[PageCandidate]
 ) -> RankedRun[PageCandidate]:
     del query
-    scored = [
-        candidate.with_scores(
-            {**candidate.scores, "length": float(len(candidate.content))}
-        )
-        for candidate in candidates
-    ]
-    scored.sort(key=lambda candidate: candidate.scores["length"], reverse=True)
-    return RankedRun("length", tuple(scored))
+    return make_run(
+        "length",
+        1.0,
+        ((candidate, float(len(candidate.content))) for candidate in candidates),
+    )
 
 
 async def search(

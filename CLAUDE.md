@@ -42,7 +42,10 @@ Score contract:
 
 - retrievers write named scores, e.g. `scores["dense"]`
 - rerankers return named ranked runs and may write a native diagnostic score
-- RRF writes `scores["rrf"]`; it is the only final ordering score
+- every run carries its fusion weight; `make_run` writes the named score and
+  orders candidates by it, best first
+- RRF reads each run's weight and writes `scores["rrf"]`; it is the only final
+  ordering score
 
 Add BM25 as a `Retriever`, cross-encoder or preference ordering as a `Reranker`,
 and filtering as SQL-backed `SearchFilter` implementations. Retriever and

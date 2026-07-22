@@ -26,6 +26,7 @@ async def test_retrieve_dense_returns_named_run_with_native_scores(monkeypatch):
     result = await retrieve_dense(request, pool=cast(Any, FakePool()))
 
     assert result.name == "dense"
+    assert result.weight == 2.0
     assert result.candidates[0].scores == {"dense": 0.75}
     assert calls[0]["query_embedding"] == (1.0, 0.0)
     assert calls[0]["limit"] == 12

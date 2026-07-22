@@ -2,7 +2,12 @@ from psycopg_pool import AsyncConnectionPool
 
 from semsearch.web import db
 from semsearch.web.search.filters import compile_filters
-from semsearch.web.search.models import ChunkCandidate, RankedRun, RetrievalRequest
+from semsearch.web.search.models import (
+    ChunkCandidate,
+    RankedRun,
+    RetrievalRequest,
+    make_run,
+)
 
 
 async def retrieve_bm25(
@@ -16,14 +21,11 @@ async def retrieve_bm25(
             predicate=predicate,
             limit=request.limit,
         )
-    return RankedRun(
+    return make_run(
         "bm25",
-        tuple(
-            ChunkCandidate(
-                chunk_id=row.chunk_id,
-                page_id=row.page_id,
-                scores={"bm25": row.rank},
-            )
+        0.5,
+        (
+            (ChunkCandidate(chunk_id=row.chunk_id, page_id=row.page_id), row.rank)
             for row in rows
         ),
     )
@@ -40,14 +42,11 @@ async def retrieve_dense(
             predicate=predicate,
             limit=request.limit,
         )
-    return RankedRun(
+    return make_run(
         "dense",
-        tuple(
-            ChunkCandidate(
-                chunk_id=row.chunk_id,
-                page_id=row.page_id,
-                scores={"dense": row.similarity},
-            )
+        2.0,
+        (
+            (ChunkCandidate(chunk_id=row.chunk_id, page_id=row.page_id), row.similarity)
             for row in rows
         ),
     )

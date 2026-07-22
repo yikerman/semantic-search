@@ -1,11 +1,6 @@
-from collections.abc import Mapping, Sequence
-from types import MappingProxyType
+from collections.abc import Sequence
 
 from semsearch.web.search.models import ChunkCandidate, PageCandidate, RankedRun
-
-RUN_WEIGHTS: Mapping[str, float] = MappingProxyType(
-    {"dense": 2.0, "bm25": 0.5, "length": 1.0}
-)
 
 
 def union_chunk_candidates(
@@ -41,21 +36,14 @@ def union_page_candidates(
 def reciprocal_rank_fusion(
     runs: Sequence[RankedRun[PageCandidate]], *, k: int = 60
 ) -> list[PageCandidate]:
-    weights: list[float] = []
-    for run in runs:
-        try:
-            weights.append(RUN_WEIGHTS[run.name])
-        except KeyError as exc:
-            raise ValueError(f"missing RRF weight for run {run.name!r}") from exc
-
     candidates = {
         candidate.page_id: candidate for candidate in union_page_candidates(runs)
     }
     rrf_scores = dict.fromkeys(candidates, 0.0)
 
-    for run, weight in zip(runs, weights, strict=True):
+    for run in runs:
         for rank, candidate in enumerate(run.candidates, start=1):
-            rrf_scores[candidate.page_id] += weight / (k + rank)
+            rrf_scores[candidate.page_id] += run.weight / (k + rank)
 
     fused = [
         candidate.with_scores({**candidate.scores, "rrf": rrf_scores[page_id]})

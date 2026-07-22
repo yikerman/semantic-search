@@ -32,6 +32,7 @@ async def test_retrieve_bm25_returns_named_run_with_native_scores(monkeypatch):
     result = await retrieve_bm25(request, pool=cast(Any, FakePool()))
 
     assert result.name == "bm25"
+    assert result.weight == 0.5
     assert result.candidates[0].scores == {"bm25": 0.25}
     assert calls[0]["query"] == "matching"
     assert calls[0]["limit"] == 12
