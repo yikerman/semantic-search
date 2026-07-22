@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from semsearch.cli.ingest.lease import LeaseLostError, run_with_lease
+from semsearch.cli.daemon.lease import LeaseLostError, run_with_lease
 
 
 async def test_lease_loss_cancels_in_flight_operation():

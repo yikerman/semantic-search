@@ -5,8 +5,7 @@ from typing import Any, cast
 
 import pytest
 
-import semsearch.cli.daemon as daemon_module
-from semsearch.cli.daemon import (
+from semsearch.cli.daemon.run import (
     DAEMON_LOCK_ID,
     DaemonAlreadyRunningError,
     advisory_lock,
@@ -147,10 +146,10 @@ async def test_run_daemon_holds_lock_around_supervision(monkeypatch):
     async def process_next():
         return None
 
-    monkeypatch.setattr("semsearch.cli.daemon.db.scatter_poll_schedule", scatter)
-    monkeypatch.setattr("semsearch.cli.daemon.db.claim_due_site", claim_due_site)
+    monkeypatch.setattr("semsearch.cli.daemon.schedule.scatter_poll_schedule", scatter)
+    monkeypatch.setattr("semsearch.cli.daemon.schedule.claim_due_site", claim_due_site)
     monkeypatch.setattr(
-        "semsearch.cli.daemon.create_crawl_job_processor",
+        "semsearch.cli.daemon.run.create_crawl_job_processor",
         lambda **kwargs: process_next,
     )
 
@@ -187,7 +186,7 @@ async def test_run_daemon_starts_nothing_when_lock_is_unavailable(monkeypatch):
     async def scatter(conn, *, interval_seconds):
         scattered.append(interval_seconds)
 
-    monkeypatch.setattr("semsearch.cli.daemon.db.scatter_poll_schedule", scatter)
+    monkeypatch.setattr("semsearch.cli.daemon.schedule.scatter_poll_schedule", scatter)
 
     with pytest.raises(DaemonAlreadyRunningError):
         await run_daemon(
@@ -200,28 +199,3 @@ async def test_run_daemon_starts_nothing_when_lock_is_unavailable(monkeypatch):
         )
 
     assert scattered == []
-
-
-@pytest.mark.parametrize(
-    ("result", "expected_delay"), [(None, 1), (RuntimeError("db"), 5)]
-)
-async def test_crawl_loop_uses_idle_and_error_backoff(
-    monkeypatch, result, expected_delay
-):
-    delays: list[int] = []
-
-    async def process_next():
-        if isinstance(result, Exception):
-            raise result
-        return result
-
-    async def sleep(delay):
-        delays.append(delay)
-        raise asyncio.CancelledError
-
-    monkeypatch.setattr(daemon_module.asyncio, "sleep", sleep)
-
-    with pytest.raises(asyncio.CancelledError):
-        await daemon_module._crawl_loop(process_next)
-
-    assert delays == [expected_delay]

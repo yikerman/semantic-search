@@ -10,10 +10,11 @@ import psycopg
 from psycopg_pool import AsyncConnectionPool
 
 from semsearch.cli import db
+from semsearch.cli.daemon import queue
+from semsearch.cli.daemon.lease import LeaseLostError, run_with_lease
 from semsearch.cli.ingest.chunk import Chunker
 from semsearch.cli.ingest.extract import extract_page
 from semsearch.cli.ingest.fetch import FetchError, FetchResponse
-from semsearch.cli.ingest.lease import LeaseLostError, run_with_lease
 from semsearch.cli.models import CrawlAttempt
 from semsearch.cli.url import same_site
 from semsearch.share.embeddings import EmbedDocuments, EmbeddingError
@@ -23,6 +24,8 @@ logger = logging.getLogger(__name__)
 _RETRY_DELAYS = (300, 1800, 7200, 21600, 86400)
 _FLAKY_FETCH_ATTEMPTS = 3
 _TRANSIENT_ATTEMPTS = 10
+_IDLE_POLL_SECONDS = 1
+_ERROR_BACKOFF_SECONDS = 5
 
 type CrawlAttemptStatus = Literal[
     "indexed", "skipped", "retrying", "failed", "lease_lost"
@@ -90,9 +93,9 @@ async def _process_next_crawl_job(
     async with busy_sites.claim_lock:
         excluded_sites = busy_sites.site_ids()
         async with pool.connection() as conn, conn.transaction():
-            attempt = await db.claim_crawl_job(conn, exclude_site_ids=excluded_sites)
+            attempt = await queue.claim_crawl_job(conn, exclude_site_ids=excluded_sites)
             if attempt is None and excluded_sites:
-                attempt = await db.claim_crawl_job(conn)
+                attempt = await queue.claim_crawl_job(conn)
         if attempt is None:
             return None
         busy_sites.add(attempt.site_id)
@@ -148,7 +151,7 @@ async def _run_crawl_attempt(
 
         async with pool.connection() as conn, conn.transaction():
             if failed:
-                transitioned = await db.fail_crawl_job(
+                transitioned = await queue.fail_crawl_job(
                     conn,
                     job_id=attempt.id,
                     lease_token=attempt.lease_token,
@@ -159,7 +162,7 @@ async def _run_crawl_attempt(
                 return CrawlAttemptOutcome(attempt.url, "failed", str(exc))
 
             delay = _RETRY_DELAYS[min(attempt.attempt_count, len(_RETRY_DELAYS) - 1)]
-            transitioned = await db.retry_crawl_job(
+            transitioned = await queue.retry_crawl_job(
                 conn,
                 job_id=attempt.id,
                 lease_token=attempt.lease_token,
@@ -233,7 +236,7 @@ async def _ingest_crawl_attempt(
 async def _complete_owned_attempt(
     conn: psycopg.AsyncConnection, attempt: CrawlAttempt
 ) -> None:
-    completed = await db.complete_crawl_job(
+    completed = await queue.complete_crawl_job(
         conn,
         job_id=attempt.id,
         lease_token=attempt.lease_token,
@@ -257,6 +260,22 @@ def _lease_lost_outcome(attempt: CrawlAttempt) -> CrawlAttemptOutcome:
 
 async def _renew_crawl_lease(pool: AsyncConnectionPool, attempt: CrawlAttempt) -> bool:
     async with pool.connection() as conn, conn.transaction():
-        return await db.renew_crawl_lease(
+        return await queue.renew_crawl_lease(
             conn, job_id=attempt.id, lease_token=attempt.lease_token
         )
+
+
+async def crawl_loop(process_next: ProcessNextCrawlJob) -> None:
+    while True:
+        try:
+            outcome = await process_next()
+        except Exception:  # noqa: BLE001
+            logger.exception("Crawl loop error; backing off")
+            await asyncio.sleep(_ERROR_BACKOFF_SECONDS)
+            continue
+        if outcome is None:
+            await asyncio.sleep(_IDLE_POLL_SECONDS)
+        elif outcome.status == "indexed":
+            logger.info("Indexed %s (%d chunks)", outcome.url, outcome.chunk_count)
+        elif outcome.status == "skipped":
+            logger.info("Skipped %s: %s", outcome.url, outcome.detail)

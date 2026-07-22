@@ -5,12 +5,12 @@ from uuid import uuid4
 
 import pytest
 
-from semsearch.cli.ingest import crawl_jobs
+from semsearch.cli.daemon import consumer
+from semsearch.cli.daemon.consumer import create_crawl_job_processor
+from semsearch.cli.daemon.lease import LeaseLostError
 from semsearch.cli.ingest.chunk import Chunk
-from semsearch.cli.ingest.crawl_jobs import create_crawl_job_processor
 from semsearch.cli.ingest.extract import ExtractedPage
 from semsearch.cli.ingest.fetch import FetchError, FetchResponse
-from semsearch.cli.ingest.lease import LeaseLostError
 from semsearch.cli.models import CrawlAttempt
 
 
@@ -76,7 +76,7 @@ async def test_idle_queue_returns_none_without_fetching(monkeypatch):
         fetched = True
         return response(url)
 
-    monkeypatch.setattr(crawl_jobs.db, "claim_crawl_job", claim)
+    monkeypatch.setattr(consumer.queue, "claim_crawl_job", claim)
 
     assert await processor(Pool(), fetch_page)() is None
     assert not fetched
@@ -111,13 +111,13 @@ async def test_indexed_attempt_fences_before_atomic_page_and_chunk_writes(
         assert conn.in_transaction
         writes.append("chunks")
 
-    monkeypatch.setattr(crawl_jobs.db, "claim_crawl_job", claim)
-    monkeypatch.setattr(crawl_jobs.db, "page_exists", page_exists)
-    monkeypatch.setattr(crawl_jobs.db, "complete_crawl_job", complete)
-    monkeypatch.setattr(crawl_jobs.db, "insert_page", insert_page)
-    monkeypatch.setattr(crawl_jobs.db, "insert_page_chunks", insert_chunks)
+    monkeypatch.setattr(consumer.queue, "claim_crawl_job", claim)
+    monkeypatch.setattr(consumer.db, "page_exists", page_exists)
+    monkeypatch.setattr(consumer.queue, "complete_crawl_job", complete)
+    monkeypatch.setattr(consumer.db, "insert_page", insert_page)
+    monkeypatch.setattr(consumer.db, "insert_page_chunks", insert_chunks)
     monkeypatch.setattr(
-        crawl_jobs,
+        consumer,
         "extract_page",
         lambda html, url: ExtractedPage("Title", "body", None, "en"),
     )
@@ -149,9 +149,9 @@ async def test_existing_page_skips_fetch_after_fenced_completion(monkeypatch):
         fetched = True
         return response(url)
 
-    monkeypatch.setattr(crawl_jobs.db, "claim_crawl_job", claim)
-    monkeypatch.setattr(crawl_jobs.db, "page_exists", page_exists)
-    monkeypatch.setattr(crawl_jobs.db, "complete_crawl_job", complete)
+    monkeypatch.setattr(consumer.queue, "claim_crawl_job", claim)
+    monkeypatch.setattr(consumer.db, "page_exists", page_exists)
+    monkeypatch.setattr(consumer.queue, "complete_crawl_job", complete)
 
     outcome = await processor(Pool(), fetch_page)()
 
@@ -179,13 +179,13 @@ async def test_concurrent_page_insert_skips_without_writing_chunks(monkeypatch):
         nonlocal chunks_written
         chunks_written = True
 
-    monkeypatch.setattr(crawl_jobs.db, "claim_crawl_job", claim)
-    monkeypatch.setattr(crawl_jobs.db, "page_exists", page_exists)
-    monkeypatch.setattr(crawl_jobs.db, "complete_crawl_job", complete)
-    monkeypatch.setattr(crawl_jobs.db, "insert_page", insert_page)
-    monkeypatch.setattr(crawl_jobs.db, "insert_page_chunks", insert_chunks)
+    monkeypatch.setattr(consumer.queue, "claim_crawl_job", claim)
+    monkeypatch.setattr(consumer.db, "page_exists", page_exists)
+    monkeypatch.setattr(consumer.queue, "complete_crawl_job", complete)
+    monkeypatch.setattr(consumer.db, "insert_page", insert_page)
+    monkeypatch.setattr(consumer.db, "insert_page_chunks", insert_chunks)
     monkeypatch.setattr(
-        crawl_jobs,
+        consumer,
         "extract_page",
         lambda html, url: ExtractedPage("Title", "body", None, "en"),
     )
@@ -216,12 +216,12 @@ async def test_stale_completion_returns_lease_lost_before_page_writes(monkeypatc
         inserted = True
         return 3
 
-    monkeypatch.setattr(crawl_jobs.db, "claim_crawl_job", claim)
-    monkeypatch.setattr(crawl_jobs.db, "page_exists", page_exists)
-    monkeypatch.setattr(crawl_jobs.db, "complete_crawl_job", complete)
-    monkeypatch.setattr(crawl_jobs.db, "insert_page", insert_page)
+    monkeypatch.setattr(consumer.queue, "claim_crawl_job", claim)
+    monkeypatch.setattr(consumer.db, "page_exists", page_exists)
+    monkeypatch.setattr(consumer.queue, "complete_crawl_job", complete)
+    monkeypatch.setattr(consumer.db, "insert_page", insert_page)
     monkeypatch.setattr(
-        crawl_jobs,
+        consumer,
         "extract_page",
         lambda html, url: ExtractedPage("Title", "body", None, "en"),
     )
@@ -264,12 +264,12 @@ async def _run_failure(
     async def page_exists(conn, *, url):
         return False
 
-    monkeypatch.setattr(crawl_jobs.db, "claim_crawl_job", claim)
-    monkeypatch.setattr(crawl_jobs.db, "page_exists", page_exists)
-    monkeypatch.setattr(crawl_jobs.db, "retry_crawl_job", retry)
-    monkeypatch.setattr(crawl_jobs.db, "fail_crawl_job", fail)
+    monkeypatch.setattr(consumer.queue, "claim_crawl_job", claim)
+    monkeypatch.setattr(consumer.db, "page_exists", page_exists)
+    monkeypatch.setattr(consumer.queue, "retry_crawl_job", retry)
+    monkeypatch.setattr(consumer.queue, "fail_crawl_job", fail)
     if error is None:
-        monkeypatch.setattr(crawl_jobs, "extract_page", lambda html, url: None)
+        monkeypatch.setattr(consumer, "extract_page", lambda html, url: None)
 
     outcome = await processor(Pool(), fetch_page)()
     assert outcome is not None
@@ -333,8 +333,8 @@ async def test_heartbeat_lease_loss_becomes_explicit_outcome(monkeypatch):
     async def lose_lease(operation, renew):
         raise LeaseLostError("database lease was lost")
 
-    monkeypatch.setattr(crawl_jobs.db, "claim_crawl_job", claim)
-    monkeypatch.setattr(crawl_jobs, "run_with_lease", lose_lease)
+    monkeypatch.setattr(consumer.queue, "claim_crawl_job", claim)
+    monkeypatch.setattr(consumer, "run_with_lease", lose_lease)
 
     outcome = await processor(
         Pool(), lambda url: asyncio.sleep(0, result=response(url))
@@ -361,10 +361,10 @@ async def test_concurrent_calls_prefer_different_sites(monkeypatch):
         if claimed.site_id == 7:
             await second_claimed.wait()
             await release_first.wait()
-        return crawl_jobs.CrawlAttemptOutcome(claimed.url, "indexed")
+        return consumer.CrawlAttemptOutcome(claimed.url, "indexed")
 
-    monkeypatch.setattr(crawl_jobs.db, "claim_crawl_job", claim)
-    monkeypatch.setattr(crawl_jobs, "_run_crawl_attempt", run_attempt)
+    monkeypatch.setattr(consumer.queue, "claim_crawl_job", claim)
+    monkeypatch.setattr(consumer, "_run_crawl_attempt", run_attempt)
     process_next = processor(Pool(), lambda url: asyncio.sleep(0, result=response(url)))
 
     first = asyncio.ensure_future(process_next())
@@ -398,10 +398,10 @@ async def test_claim_falls_back_to_a_busy_site(monkeypatch):
         if claimed.id == 1:
             first_started.set()
             await release_first.wait()
-        return crawl_jobs.CrawlAttemptOutcome(claimed.url, "indexed")
+        return consumer.CrawlAttemptOutcome(claimed.url, "indexed")
 
-    monkeypatch.setattr(crawl_jobs.db, "claim_crawl_job", claim)
-    monkeypatch.setattr(crawl_jobs, "_run_crawl_attempt", run_attempt)
+    monkeypatch.setattr(consumer.queue, "claim_crawl_job", claim)
+    monkeypatch.setattr(consumer, "_run_crawl_attempt", run_attempt)
     process_next = processor(Pool(), lambda url: asyncio.sleep(0, result=response(url)))
 
     first = asyncio.ensure_future(process_next())
@@ -424,14 +424,39 @@ async def test_busy_site_is_released_when_processing_raises(monkeypatch):
     async def run_attempt(*args):
         raise RuntimeError("database unavailable")
 
-    monkeypatch.setattr(crawl_jobs.db, "claim_crawl_job", claim)
-    monkeypatch.setattr(crawl_jobs, "_run_crawl_attempt", run_attempt)
+    monkeypatch.setattr(consumer.queue, "claim_crawl_job", claim)
+    monkeypatch.setattr(consumer, "_run_crawl_attempt", run_attempt)
     process_next = processor(Pool(), lambda url: asyncio.sleep(0, result=response(url)))
 
     with pytest.raises(RuntimeError, match="database unavailable"):
         await process_next()
     assert await process_next() is None
     assert exclusions == [(), ()]
+
+
+@pytest.mark.parametrize(
+    ("result", "expected_delay"), [(None, 1), (RuntimeError("db"), 5)]
+)
+async def test_crawl_loop_uses_idle_and_error_backoff(
+    monkeypatch, result, expected_delay
+):
+    delays: list[int] = []
+
+    async def process_next():
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    async def sleep(delay):
+        delays.append(delay)
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(consumer.asyncio, "sleep", sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await consumer.crawl_loop(process_next)
+
+    assert delays == [expected_delay]
 
 
 async def test_cancellation_releases_busy_site(monkeypatch):
@@ -446,8 +471,8 @@ async def test_cancellation_releases_busy_site(monkeypatch):
         started.set()
         await asyncio.Future()
 
-    monkeypatch.setattr(crawl_jobs.db, "claim_crawl_job", claim)
-    monkeypatch.setattr(crawl_jobs, "_run_crawl_attempt", run_attempt)
+    monkeypatch.setattr(consumer.queue, "claim_crawl_job", claim)
+    monkeypatch.setattr(consumer, "_run_crawl_attempt", run_attempt)
     process_next = processor(Pool(), lambda url: asyncio.sleep(0, result=response(url)))
 
     task = asyncio.ensure_future(process_next())

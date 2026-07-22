@@ -413,11 +413,15 @@ async def test_pending_history_retries_after_recent_urls_are_already_known(
             raise FetchError("archive temporarily unavailable")
         return 0
 
-    monkeypatch.setattr("semsearch.cli.sites.db.known_urls", known_urls)
-    monkeypatch.setattr("semsearch.cli.sites.db.enqueue_urls", enqueue_urls)
-    monkeypatch.setattr("semsearch.cli.sites.db.mark_history_pending", mark_pending)
-    monkeypatch.setattr("semsearch.cli.sites.db.finish_history", finish_history)
-    monkeypatch.setattr("semsearch.cli.sites.db.mark_poll_succeeded", mark_succeeded)
+    monkeypatch.setattr("semsearch.cli.sites.queue.known_urls", known_urls)
+    monkeypatch.setattr("semsearch.cli.sites.queue.enqueue_urls", enqueue_urls)
+    monkeypatch.setattr(
+        "semsearch.cli.sites.schedule.mark_history_pending", mark_pending
+    )
+    monkeypatch.setattr("semsearch.cli.sites.schedule.finish_history", finish_history)
+    monkeypatch.setattr(
+        "semsearch.cli.sites.schedule.mark_poll_succeeded", mark_succeeded
+    )
     monkeypatch.setattr("semsearch.cli.sites._discover_history", discover_history)
     settings = Settings(embedding_model="test", embedding_dim=2)
     site = _site()

@@ -10,7 +10,9 @@ Code is organized by ownership under three packages:
 - `semsearch.share`: settings, database pool setup, embeddings, schema, and
   utilities used by both surfaces
 - `semsearch.cli`: Typer commands, CLI database operations, site lifecycle,
-  crawling, and ingestion
+  crawling, and ingestion; `semsearch.cli.daemon` is the producer/consumer
+  package (`schedule` → `producer` → `queue` → `consumer` → pages), and
+  `semsearch.cli.ingest` holds the pure pipeline stages
 - `semsearch.web`: FastAPI app, web database reads, search pipeline, and
   templates
 

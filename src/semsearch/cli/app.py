@@ -12,7 +12,7 @@ import typer
 from psycopg_pool import AsyncConnectionPool
 
 from semsearch.cli import db
-from semsearch.cli.daemon import (
+from semsearch.cli.daemon.run import (
     DAEMON_LOCK_ID,
     DaemonAlreadyRunningError,
     advisory_lock,

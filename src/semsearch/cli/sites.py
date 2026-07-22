@@ -12,10 +12,11 @@ from psycopg_pool import AsyncConnectionPool
 from trafilatura.feeds import FeedParameters, determine_feed
 
 from semsearch.cli import db
+from semsearch.cli.daemon import queue, schedule
+from semsearch.cli.daemon.lease import run_with_lease
 from semsearch.cli.ingest import sitemap
 from semsearch.cli.ingest.feed import FeedError, ParsedFeed, parse_feed
 from semsearch.cli.ingest.fetch import FetchError, Fetcher, FetchResponse
-from semsearch.cli.ingest.lease import run_with_lease
 from semsearch.cli.models import Site
 from semsearch.cli.url import (
     canonicalize_url,
@@ -138,7 +139,7 @@ async def _poll_site_record(
     )
     if response.status == 304:
         async with pool.connection() as conn, conn.transaction():
-            await db.mark_poll_succeeded(
+            await schedule.mark_poll_succeeded(
                 conn,
                 site_id=record.id,
                 etag=_header(response, "etag"),
@@ -150,21 +151,21 @@ async def _poll_site_record(
 
     parsed = _site_feed(await _parse_response(response), record)
     async with pool.connection() as conn, conn.transaction():
-        known = await db.known_urls(conn, parsed.urls)
+        known = await queue.known_urls(conn, parsed.urls)
         all_new = bool(parsed.urls) and not known
         current_urls = (
             parsed.urls[: settings.history_post_limit]
             if (all_new or record.history_pending)
             else parsed.urls
         )
-        discovered = await db.enqueue_urls(
+        discovered = await queue.enqueue_urls(
             conn,
             site_id=record.id,
             urls=current_urls,
             source="feed",
         )
         if all_new and not record.history_pending:
-            await db.mark_history_pending(
+            await schedule.mark_history_pending(
                 conn, site_id=record.id, lease_token=lease_token
             )
 
@@ -179,14 +180,14 @@ async def _poll_site_record(
                 settings.history_post_limit,
             )
             async with pool.connection() as conn, conn.transaction():
-                await db.finish_history(
+                await schedule.finish_history(
                     conn, site_id=record.id, lease_token=lease_token
                 )
         except HistoryLimitError as exc:
             history_error = str(exc)
             logger.error("%s: %s", record.base_url, history_error)
             async with pool.connection() as conn, conn.transaction():
-                await db.finish_history(
+                await schedule.finish_history(
                     conn,
                     site_id=record.id,
                     lease_token=lease_token,
@@ -202,7 +203,7 @@ async def _poll_site_record(
             logger.warning("%s: %s", record.base_url, history_error)
 
     async with pool.connection() as conn, conn.transaction():
-        await db.mark_poll_succeeded(
+        await schedule.mark_poll_succeeded(
             conn,
             site_id=record.id,
             etag=_header(response, "etag"),
@@ -379,7 +380,7 @@ async def _enqueue(
     pool: AsyncConnectionPool, site_id: int, urls: list[str], source: str
 ) -> int:
     async with pool.connection() as conn, conn.transaction():
-        return await db.enqueue_urls(conn, site_id=site_id, urls=urls, source=source)
+        return await queue.enqueue_urls(conn, site_id=site_id, urls=urls, source=source)
 
 
 async def _resolve_sitemap(fetcher: Fetcher, start_url: str, value: str) -> str | None:
@@ -510,4 +511,6 @@ async def _renew_poll_lease(
     pool: AsyncConnectionPool, site_id: int, lease_token: UUID
 ) -> bool:
     async with pool.connection() as conn, conn.transaction():
-        return await db.renew_poll_lease(conn, site_id=site_id, lease_token=lease_token)
+        return await schedule.renew_poll_lease(
+            conn, site_id=site_id, lease_token=lease_token
+        )
