@@ -48,6 +48,17 @@ class DisplayResult:
     scores: Mapping[str, float]
 
 
+def dense_confidence(score: float) -> str:
+    if score >= 0.65:
+        return "high"
+    if score >= 0.50:
+        return "mid"
+    return "low"
+
+
+templates.env.filters["dense_confidence"] = dense_confidence
+
+
 def prepare_language_options(
     languages: Sequence[str], *, selected: str | None
 ) -> list[str]:

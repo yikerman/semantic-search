@@ -11,6 +11,7 @@ from semsearch.share.status import IndexStats
 from semsearch.web.app import (
     DisplayResult,
     create_app,
+    dense_confidence,
     parse_published_range,
     prepare_display,
     prepare_language_options,
@@ -90,6 +91,15 @@ def test_web_template_shows_scores_with_shared_semantic_structure():
     assert '<article class="result">' in html
     assert 'Published <time datetime="2025-06-07">2025-06-07</time>' in html
     assert "<style" not in html
+
+
+def test_dense_confidence_buckets_scores_at_boundaries():
+    assert dense_confidence(0.9) == "high"
+    assert dense_confidence(0.65) == "high"
+    assert dense_confidence(0.649) == "mid"
+    assert dense_confidence(0.50) == "mid"
+    assert dense_confidence(0.499) == "low"
+    assert dense_confidence(-0.2) == "low"
 
 
 def test_language_options_are_sorted_and_preserve_unknown_selection():

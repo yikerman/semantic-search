@@ -6,6 +6,9 @@
   --border: #d9e0e1;
   --accent: #176671;
   --error: #9b382f;
+  --dense-high: #587a63;
+  --dense-mid: #8a7a4a;
+  --dense-low: #9b5f57;
 }
 
 * {
@@ -198,6 +201,18 @@ button:hover {
   overflow-wrap: anywhere;
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+.dense-high {
+  color: var(--dense-high);
+}
+
+.dense-mid {
+  color: var(--dense-mid);
+}
+
+.dense-low {
+  color: var(--dense-low);
 }
 
 .result-snippet {

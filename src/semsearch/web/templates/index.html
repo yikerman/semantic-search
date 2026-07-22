@@ -50,12 +50,15 @@
           <p class="result-meta">
             {{ result.url }}
             {% if result.published_date %}
-            &middot; Published <time datetime="{{ result.published_date.isoformat() }}">{{ result.published_date.isoformat() }}</time>
+            &middot; Published <time datetime="{{ result.published_date.isoformat() }}">{{
+              result.published_date.isoformat() }}</time>
             {% endif %}
             &middot; rrf {{ "%.6f" | format(result.scores["rrf"]) }}
             {% for name, score in result.scores.items() if name != "rrf" %}
             {% if name == "length" %}
             &middot; length {{ "{:,}".format(score | int) }} chars
+            {% elif name == "dense" %}
+            &middot; <span class="dense-{{ score | dense_confidence }}">{{ name }} {{ "%.3f" | format(score) }}</span>
             {% else %}
             &middot; {{ name }} {{ "%.3f" | format(score) }}
             {% endif %}
