@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Any, cast
+
 import feedparser
 
 from semsearch.cli.url import try_normalize_url

@@ -18,7 +18,7 @@ class ChunkCandidate:
     def __post_init__(self) -> None:
         object.__setattr__(self, "scores", MappingProxyType(dict(self.scores)))
 
-    def with_scores(self, scores: Mapping[str, float]) -> "ChunkCandidate":
+    def with_scores(self, scores: Mapping[str, float]) -> ChunkCandidate:
         return replace(self, scores=scores)
 
 
@@ -34,7 +34,7 @@ class PageCandidate:
     def __post_init__(self) -> None:
         object.__setattr__(self, "scores", MappingProxyType(dict(self.scores)))
 
-    def with_scores(self, scores: Mapping[str, float]) -> "PageCandidate":
+    def with_scores(self, scores: Mapping[str, float]) -> PageCandidate:
         return replace(self, scores=scores)
 
 

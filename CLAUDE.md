@@ -49,7 +49,8 @@ Score contract:
 - RRF reads each run's weight and writes `scores["rrf"]`; it is the only final
   ordering score
 
-Add BM25 as a `Retriever`, cross-encoder or preference ordering as a `Reranker`,
+Dense ANN and BM25 (VectorChord-bm25) ship as `Retriever`s. Add new retrieval
+signals as `Retriever`s, cross-encoder or preference ordering as a `Reranker`,
 and filtering as SQL-backed `SearchFilter` implementations. Retriever and
 reranker runs are inputs to the final RRF fusion.
 

@@ -3,9 +3,9 @@ from datetime import UTC, date, datetime
 
 import httpx
 import pytest
-import semsearch.cli.app as cli_module
 from typer.testing import CliRunner
 
+import semsearch.cli.app as cli_module
 from semsearch.share.config import Settings
 from semsearch.share.status import IndexStats
 from semsearch.web.app import (
@@ -164,7 +164,12 @@ def test_prepare_display_extracts_bounded_page_lead():
 
 
 async def test_status_page_shows_recent_activity(monkeypatch):
+    stats_calls = 0
+    activity_calls = 0
+
     async def stats(conn):
+        nonlocal stats_calls
+        stats_calls += 1
         return IndexStats(
             site_count=5,
             page_count=100,
@@ -175,6 +180,8 @@ async def test_status_page_shows_recent_activity(monkeypatch):
         )
 
     async def activity(conn):
+        nonlocal activity_calls
+        activity_calls += 1
         return [
             RecentActivity(
                 "https://example.com/new",
@@ -204,8 +211,12 @@ async def test_status_page_shows_recent_activity(monkeypatch):
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/status")
+        cached_response = await client.get("/status")
 
     assert response.status_code == 200
+    assert cached_response.status_code == 200
+    assert stats_calls == 1
+    assert activity_calls == 1
     assert response.text.count('aria-current="page"') == 1
     assert ">Status</a>" in response.text
     assert "<caption>Index totals</caption>" in response.text

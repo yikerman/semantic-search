@@ -3,13 +3,13 @@ import time
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Self
 
 from curl_cffi.requests import AsyncSession
 from curl_cffi.requests.exceptions import RequestException
 
-from semsearch.share.config import Settings
 from semsearch.cli.url import normalize_origin, normalize_url
+from semsearch.share.config import Settings
 
 
 class FetchError(RuntimeError):
@@ -140,7 +140,7 @@ class Fetcher:
     async def aclose(self) -> None:
         await self._session.close()
 
-    async def __aenter__(self) -> "Fetcher":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:

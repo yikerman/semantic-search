@@ -4,8 +4,8 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
-from uuid import UUID
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from uuid import UUID
 from xml.etree import ElementTree
 
 from psycopg_pool import AsyncConnectionPool
@@ -16,7 +16,7 @@ from semsearch.cli.daemon import queue, schedule
 from semsearch.cli.daemon.lease import run_with_lease
 from semsearch.cli.ingest import sitemap
 from semsearch.cli.ingest.feed import FeedError, ParsedFeed, parse_feed
-from semsearch.cli.ingest.fetch import FetchError, Fetcher, FetchResponse
+from semsearch.cli.ingest.fetch import Fetcher, FetchError, FetchResponse
 from semsearch.cli.models import Site
 from semsearch.cli.url import (
     canonicalize_url,

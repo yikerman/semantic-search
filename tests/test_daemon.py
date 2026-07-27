@@ -141,7 +141,6 @@ async def test_run_daemon_holds_lock_around_supervision(monkeypatch):
 
     async def claim_due_site(conn):
         loops_started.set()
-        return None
 
     async def process_next():
         return None

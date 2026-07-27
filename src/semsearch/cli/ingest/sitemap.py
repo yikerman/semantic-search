@@ -23,12 +23,12 @@ _SITEMAP_NAMESPACES = (
 )
 _LOC_TAGS = frozenset(ns + "loc" for ns in _SITEMAP_NAMESPACES)
 _POST_SITEMAP_RE = re.compile(
-    r"(?:^|[-_/])(post|posts|article|articles|blog)(?:[-_.?/]|$)", re.I
+    r"(?:^|[-_/])(post|posts|article|articles|blog)(?:[-_.?/]|$)", re.IGNORECASE
 )
 _NON_POST_PATH_RE = re.compile(
     r"/(?:about|contact|privacy|terms|tag|tags|category|categories|author|authors|"
     r"attachment|attachments|archive|archives)(?:/|$)",
-    re.I,
+    re.IGNORECASE,
 )
 
 

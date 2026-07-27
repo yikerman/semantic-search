@@ -1,15 +1,16 @@
+import logging
 from collections.abc import Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, date
 from functools import partial
-import logging
 from pathlib import Path
 from time import perf_counter
 from typing import Annotated
 
 from async_lru import alru_cache
-from fastapi import FastAPI, Query, Request, status as http_status
+from fastapi import FastAPI, Query, Request
+from fastapi import status as http_status
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -18,8 +19,13 @@ from semsearch.share.config import get_settings
 from semsearch.share.db import create_pool
 from semsearch.share.embeddings import EmbeddingError, create_embeddings
 from semsearch.share.logging import configure_logging
-from semsearch.share.status import fetch_index_stats
-from semsearch.web.db import list_available_languages, list_recent_activity, ping
+from semsearch.share.status import IndexStats, fetch_index_stats
+from semsearch.web.db import (
+    RecentActivity,
+    list_available_languages,
+    list_recent_activity,
+    ping,
+)
 from semsearch.web.search.filters import (
     SearchFilter,
     filter_by_language,
@@ -125,6 +131,7 @@ async def lifespan(app: FastAPI):
             yield
         finally:
             await app.state.list_available_languages.cache_close()
+            await app.state.fetch_status_data.cache_close()
             logger.info("Stopping web application")
 
 
@@ -136,7 +143,15 @@ def create_app() -> FastAPI:
         async with app.state.pool.connection() as conn:
             return tuple(await list_available_languages(conn))
 
+    @alru_cache(maxsize=1, ttl=1)
+    async def cached_status_data() -> tuple[IndexStats, tuple[RecentActivity, ...]]:
+        async with app.state.pool.connection() as conn:
+            stats = await fetch_index_stats(conn)
+            activity = tuple(await list_recent_activity(conn))
+        return stats, activity
+
     app.state.list_available_languages = cached_available_languages
+    app.state.fetch_status_data = cached_status_data
     app.mount(
         "/static",
         StaticFiles(directory=Path(__file__).parent / "static"),
@@ -217,9 +232,7 @@ def create_app() -> FastAPI:
 
     @app.get("/status", response_class=HTMLResponse)
     async def status(request: Request):
-        async with request.app.state.pool.connection() as conn:
-            stats = await fetch_index_stats(conn)
-            activity = await list_recent_activity(conn)
+        stats, activity = await request.app.state.fetch_status_data()
         settings = get_settings()
         return templates.TemplateResponse(
             request,

@@ -1,11 +1,9 @@
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TypeVar
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar("T")
 type RenewLease = Callable[[], Awaitable[bool]]
 
 
@@ -13,7 +11,7 @@ class LeaseLostError(RuntimeError):
     pass
 
 
-async def run_with_lease(
+async def run_with_lease[T](
     operation: Callable[[], Awaitable[T]],
     renew: RenewLease,
     *,

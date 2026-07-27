@@ -76,7 +76,7 @@ def _dense_candidate_from_row(row: tuple[object, ...]) -> DenseCandidateRecord:
         or not isinstance(similarity, (int, float))
         or isinstance(similarity, bool)
     ):
-        raise ValueError("invalid dense candidate database row")
+        raise ValueError("invalid dense candidate database row")  # noqa: TRY004
     return DenseCandidateRecord(chunk_id, page_id, float(similarity))
 
 
@@ -92,7 +92,7 @@ def _bm25_candidate_from_row(row: tuple[object, ...]) -> Bm25CandidateRecord:
         or not isinstance(rank, (int, float))
         or isinstance(rank, bool)
     ):
-        raise ValueError("invalid BM25 candidate database row")
+        raise ValueError("invalid BM25 candidate database row")  # noqa: TRY004
     return Bm25CandidateRecord(chunk_id, page_id, float(rank))
 
 
@@ -101,7 +101,7 @@ def _recent_activity_from_row(row: tuple[object, ...]) -> RecentActivity:
         raise ValueError("invalid recent activity database row")
     url, status, occurred_at, attempt_count, detail = row
     if not isinstance(url, str):
-        raise ValueError("invalid recent activity database row")
+        raise ValueError("invalid recent activity database row")  # noqa: TRY004
     checked_status: Literal["success", "failure"]
     if status == "success":
         checked_status = "success"
@@ -110,7 +110,7 @@ def _recent_activity_from_row(row: tuple[object, ...]) -> RecentActivity:
     else:
         raise ValueError("invalid recent activity database row")
     if not isinstance(occurred_at, datetime):
-        raise ValueError("invalid recent activity database row")
+        raise ValueError("invalid recent activity database row")  # noqa: TRY004
     if attempt_count is not None and not isinstance(attempt_count, int):
         raise ValueError("invalid recent activity database row")
     if detail is not None and not isinstance(detail, str):

@@ -17,7 +17,7 @@ from semsearch.cli.ingest.extract import extract_page
 from semsearch.cli.ingest.fetch import FetchError, FetchResponse
 from semsearch.cli.models import CrawlAttempt
 from semsearch.cli.url import same_site
-from semsearch.share.embeddings import EmbedDocuments, EmbeddingError
+from semsearch.share.embeddings import EmbeddingError, EmbedDocuments
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +133,7 @@ async def _run_crawl_attempt(
         )
     except LeaseLostError:
         return _lease_lost_outcome(attempt)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         attempt_number = attempt.attempt_count + 1
         failed = attempt_number >= _attempt_budget(exc)
         if isinstance(exc, (FetchError, _ContentError, EmbeddingError)):
@@ -269,7 +269,7 @@ async def crawl_loop(process_next: ProcessNextCrawlJob) -> None:
     while True:
         try:
             outcome = await process_next()
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("Crawl loop error; backing off")
             await asyncio.sleep(_ERROR_BACKOFF_SECONDS)
             continue

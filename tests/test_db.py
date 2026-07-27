@@ -225,7 +225,15 @@ async def test_page_lookup_rejects_invalid_database_rows():
 async def test_page_lookup_rejects_naive_publication_timestamp():
     class InvalidPageCursor:
         async def fetchall(self):
-            return [(1, "https://example.com", None, "content", datetime(2025, 1, 2))]
+            return [
+                (
+                    1,
+                    "https://example.com",
+                    None,
+                    "content",
+                    datetime(2025, 1, 2),  # noqa: DTZ001
+                )
+            ]
 
     class InvalidPageConnection:
         async def execute(self, query, params):

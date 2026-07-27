@@ -87,7 +87,7 @@ async def fetch_export(fetcher: Fetcher, url: str) -> list[object]:
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"Export returned invalid JSON: {exc}") from exc
     if not isinstance(payload, list):
-        raise ValueError("Export must be a JSON array")
+        raise ValueError("Export must be a JSON array")  # noqa: TRY004
     return payload
 
 

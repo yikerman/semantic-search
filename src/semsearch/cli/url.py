@@ -78,7 +78,7 @@ def _validate_parts(raw: str, original: str) -> SplitResult:
         if not address.is_global:
             raise ValueError(f"Non-public URL: {original}")
     try:
-        parts.port
+        _ = parts.port
     except ValueError as exc:
         raise ValueError(f"Invalid URL port: {original}") from exc
     return parts
@@ -104,7 +104,7 @@ def _default_port(scheme: str) -> int:
 
 def _bare_host(host: str) -> str:
     host = host.lower()
-    return host[4:] if host.startswith("www.") else host
+    return host.removeprefix("www.")
 
 
 def _site_port(parts: SplitResult) -> int | None:

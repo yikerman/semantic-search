@@ -20,7 +20,7 @@ class TokenizerError(RuntimeError):
 def load_tokenizer(identifier: str, revision: str) -> Tokenizer:
     try:
         return Tokenizer.from_pretrained(identifier, revision=revision)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise TokenizerError(
             f"Could not load tokenizer {identifier} at revision {revision}"
         ) from exc

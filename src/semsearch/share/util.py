@@ -1,12 +1,8 @@
 import asyncio
 from collections.abc import Awaitable, Callable, Iterable
-from typing import TypeVar
-
-ItemT = TypeVar("ItemT")
-ResultT = TypeVar("ResultT")
 
 
-async def map_concurrently(
+async def map_concurrently[ItemT, ResultT](
     items: Iterable[ItemT],
     *,
     limit: int,

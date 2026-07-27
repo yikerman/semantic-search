@@ -18,7 +18,7 @@ from semsearch.cli.daemon.run import (
     DaemonAlreadyRunningError,
     advisory_lock,
 )
-from semsearch.cli.ingest.fetch import FetchError, Fetcher, create_fetcher
+from semsearch.cli.ingest.fetch import Fetcher, FetchError, create_fetcher
 from semsearch.cli.models import Site
 from semsearch.cli.sites import list_sites, remove_sites
 from semsearch.share.config import get_settings

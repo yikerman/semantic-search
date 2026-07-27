@@ -43,7 +43,7 @@ async def poll_loop(
                     "Poll lease lost for %s; leaving it to the new owner",
                     site.base_url,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.exception("Failed to poll %s", site.base_url)
                 async with pool.connection() as conn, conn.transaction():
                     await schedule.mark_poll_failed(
@@ -53,6 +53,6 @@ async def poll_loop(
                         error=str(exc),
                         interval_seconds=settings.site_poll_interval_seconds,
                     )
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("Poll loop error; backing off")
             await asyncio.sleep(_ERROR_BACKOFF_SECONDS)

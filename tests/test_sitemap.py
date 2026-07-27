@@ -1,6 +1,6 @@
-import pytest
-
 from xml.etree import ElementTree
+
+import pytest
 
 from semsearch.cli.ingest.sitemap import (
     SitemapError,
@@ -57,14 +57,12 @@ def test_parse_sitemap_index():
 
 
 def test_parse_robots_sitemaps():
-    robots = "\n".join(
-        [
-            "User-agent: *",
-            "Disallow: /admin",
-            "Sitemap: https://blog.example/sitemap.xml",
-            "sitemap: /relative-sitemap.xml",
-            "# Sitemap: https://blog.example/commented.xml",
-        ]
+    robots = (
+        "User-agent: *\n"
+        "Disallow: /admin\n"
+        "Sitemap: https://blog.example/sitemap.xml\n"
+        "sitemap: /relative-sitemap.xml\n"
+        "# Sitemap: https://blog.example/commented.xml"
     )
     result = parse_robots_sitemaps(robots, "https://blog.example")
     assert result == [

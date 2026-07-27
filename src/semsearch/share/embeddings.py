@@ -1,11 +1,11 @@
 import asyncio
 import math
 from collections.abc import Awaitable, Callable
+from typing import Self
 
 import httpx
 
 from semsearch.share.config import Settings
-
 
 type EmbedDocuments = Callable[[list[str]], Awaitable[list[list[float]]]]
 type EmbedQuery = Callable[[str], Awaitable[list[float]]]
@@ -110,7 +110,7 @@ class OpenAICompatEmbeddings:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def __aenter__(self) -> "OpenAICompatEmbeddings":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:

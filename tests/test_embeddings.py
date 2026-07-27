@@ -1,4 +1,4 @@
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import pytest
 
@@ -114,7 +114,7 @@ async def test_embedding_client_reports_provider_error_payload():
     class Response:
         status_code = 200
         text = '{"error":{"message":"rate limited","code":429}}'
-        headers = {"x-request-id": "request-123"}
+        headers: ClassVar = {"x-request-id": "request-123"}
 
         def json(self):
             return {"error": {"message": "rate limited", "code": 429}}
@@ -138,7 +138,7 @@ async def test_embedding_client_retains_error_after_http_retries():
     class Response:
         status_code = 429
         text = '{"error":{"message":"rate limited"}}'
-        headers = {"x-request-id": "request-456"}
+        headers: ClassVar = {"x-request-id": "request-456"}
 
     class Client:
         async def post(self, path, json):

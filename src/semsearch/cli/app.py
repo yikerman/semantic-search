@@ -24,7 +24,7 @@ from semsearch.cli.ingest.chunk import (
     token_chunks,
 )
 from semsearch.cli.ingest.feed import FeedError
-from semsearch.cli.ingest.fetch import FetchError, Fetcher, create_fetcher
+from semsearch.cli.ingest.fetch import Fetcher, FetchError, create_fetcher
 from semsearch.cli.models import Site
 from semsearch.cli.sites import SiteError, add_site, list_sites, remove_site
 from semsearch.share.config import Settings, get_settings
@@ -150,9 +150,8 @@ def site_remove(url: str) -> None:
 
     async def _remove() -> str:
         settings = get_settings()
-        async with create_pool(settings) as pool:
-            async with advisory_lock(pool, DAEMON_LOCK_ID):
-                return await remove_site(pool, url)
+        async with create_pool(settings) as pool, advisory_lock(pool, DAEMON_LOCK_ID):
+            return await remove_site(pool, url)
 
     typer.echo(f"Removed {run(_remove())}")
 
