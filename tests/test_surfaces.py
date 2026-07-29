@@ -99,8 +99,8 @@ def test_web_template_shows_scores_with_shared_semantic_structure():
 
 def test_dense_confidence_buckets_scores_at_boundaries():
     assert dense_confidence(0.9) == "high"
-    assert dense_confidence(0.65) == "high"
-    assert dense_confidence(0.649) == "mid"
+    assert dense_confidence(0.62) == "high"
+    assert dense_confidence(0.619) == "mid"
     assert dense_confidence(0.50) == "mid"
     assert dense_confidence(0.499) == "low"
     assert dense_confidence(-0.2) == "low"
