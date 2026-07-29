@@ -30,6 +30,16 @@
         %}>
       <span>Encourage long content</span>
     </label>
+    <label class="search-option">
+      <input type="hidden" name="search_dense" value="false">
+      <input type="checkbox" name="search_dense" value="true" {% if search_dense %}checked{% endif %}>
+      <span>Search dense</span>
+    </label>
+    <label class="search-option">
+      <input type="hidden" name="search_bm25" value="false">
+      <input type="checkbox" name="search_bm25" value="true" {% if search_bm25 %}checked{% endif %}>
+      <span>Search bm25</span>
+    </label>
   </div>
 </form>
 
@@ -50,8 +60,8 @@
           <p class="result-meta">
             {{ result.url }}
             {% if result.published_date %}
-            &middot; Published <time datetime="{{ result.published_date.isoformat() }}">{{
-              result.published_date.isoformat() }}</time>
+            &middot; Published <time datetime="{{ result.published_date.isoformat() }}">
+              {{ result.published_date.isoformat() }}</time>
             {% endif %}
             &middot; rrf {{ "%.6f" | format(result.scores["rrf"]) }}
             {% for name, score in result.scores.items() if name != "rrf" %}
@@ -65,7 +75,8 @@
             {% endfor %}
           </p>
         </header>
-        <p class="result-snippet">{{ result.snippet }}{% if result.is_truncated %}&hellip;{% endif %}
+        <p class="result-snippet">
+          {{ result.snippet }}{% if result.is_truncated %}&hellip;{% endif %}
         </p>
       </article>
     </li>

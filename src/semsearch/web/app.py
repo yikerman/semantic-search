@@ -55,7 +55,7 @@ class DisplayResult:
 
 
 def dense_confidence(score: float) -> str:
-    if score >= 0.65:
+    if score >= 0.62:
         return "high"
     if score >= 0.50:
         return "mid"
@@ -163,7 +163,9 @@ def create_app() -> FastAPI:
         request: Request,
         q: str = "",
         encourage_long_content: bool = False,
-        lang: Annotated[str | None, Query(pattern=r"^(?:[A-Za-z]{2})?$")] = None,
+        search_dense: bool = True,
+        search_bm25: bool = False,
+        lang: Annotated[str | None, Query(pattern=r"^(?:[A-Za-z]{2})?$")] = "en",
         published_from: str = "",
         published_to: str = "",
     ):
@@ -180,8 +182,19 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             error = str(exc)
             status_code = http_status.HTTP_422_UNPROCESSABLE_CONTENT
+        if query and error is None and not search_dense and not search_bm25:
+            error = "Select at least one search method."
+            status_code = http_status.HTTP_422_UNPROCESSABLE_CONTENT
         if query and error is None:
             rerankers = (rerank_by_length,) if encourage_long_content else ()
+            retrievers = tuple(
+                retriever
+                for enabled, retriever in (
+                    (search_dense, retrieve_dense),
+                    (search_bm25, retrieve_bm25),
+                )
+                if enabled
+            )
             filters: list[SearchFilter] = []
             if selected_language is not None:
                 filters.append(filter_by_language(selected_language))
@@ -191,7 +204,7 @@ def create_app() -> FastAPI:
                 search,
                 pool=request.app.state.pool,
                 embed_query=request.app.state.embed_query,
-                retrievers=(retrieve_dense, retrieve_bm25),
+                retrievers=retrievers,
                 rerankers=rerankers,
                 filters=tuple(filters),
             )
@@ -218,6 +231,8 @@ def create_app() -> FastAPI:
                 "active_page": "search",
                 "q": q,
                 "encourage_long_content": encourage_long_content,
+                "search_dense": search_dense,
+                "search_bm25": search_bm25,
                 "lang": selected_language or "",
                 "published_from": published_from,
                 "published_to": published_to,

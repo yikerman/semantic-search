@@ -8,6 +8,7 @@ import pytest
 from semsearch.share.embeddings import EmbeddingError
 from semsearch.web.app import create_app
 from semsearch.web.search.pipeline import rerank_by_length
+from semsearch.web.search.retrievers import retrieve_bm25, retrieve_dense
 
 
 class Pool:
@@ -44,6 +45,21 @@ async def test_available_languages_are_cached(monkeypatch):
     assert calls == 1
 
 
+async def test_search_form_defaults_to_english_and_dense(monkeypatch):
+    app = create_app()
+    app.state.pool = Pool()
+    monkeypatch.setattr("semsearch.web.app.list_available_languages", languages)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/")
+
+    assert response.status_code == 200
+    assert '<option value="en" selected>en</option>' in response.text
+    assert 'name="search_dense" value="true" checked' in response.text
+    assert 'name="search_bm25" value="true" checked' not in response.text
+
+
 async def test_search_logs_duration_and_result_count_without_query(caplog, monkeypatch):
     app = create_app()
     query = "private search terms"
@@ -54,6 +70,7 @@ async def test_search_logs_duration_and_result_count_without_query(caplog, monke
     async def fake_search(value: str, **kwargs):
         assert value == query
         assert kwargs["pool"] is pool
+        assert kwargs["retrievers"] == (retrieve_dense, retrieve_bm25)
         assert kwargs["rerankers"] == (rerank_by_length,)
         assert len(kwargs["filters"]) == 2
         language_predicate = kwargs["filters"][0]("p")
@@ -82,6 +99,7 @@ async def test_search_logs_duration_and_result_count_without_query(caplog, monke
                 params={
                     "q": query,
                     "encourage_long_content": "true",
+                    "search_bm25": "true",
                     "lang": "EN",
                     "published_from": "2025-01-02",
                     "published_to": "2025-03-04",
@@ -107,8 +125,10 @@ async def test_search_logs_handled_embedding_error_without_query(caplog, monkeyp
 
     async def fake_search(value: str, **kwargs):
         assert value == query
+        assert kwargs["retrievers"] == (retrieve_dense,)
         assert kwargs["rerankers"] == ()
-        assert kwargs["filters"] == ()
+        language_predicate = kwargs["filters"][0]("p")
+        assert language_predicate.params == ("en",)
         raise EmbeddingError("service unavailable")
 
     monkeypatch.setattr("semsearch.web.app.search", fake_search)
@@ -128,6 +148,64 @@ async def test_search_logs_handled_embedding_error_without_query(caplog, monkeyp
     assert "embedding error" in caplog.messages[-1]
     assert "service unavailable" not in caplog.text
     assert query not in caplog.text
+
+
+async def test_search_uses_selected_retriever_and_preserves_checkbox_state(
+    monkeypatch,
+):
+    app = create_app()
+    app.state.pool = Pool()
+    app.state.embed_query = object()
+
+    async def fake_search(value: str, **kwargs):
+        assert value == "query"
+        assert kwargs["retrievers"] == (retrieve_bm25,)
+        return []
+
+    monkeypatch.setattr("semsearch.web.app.search", fake_search)
+    monkeypatch.setattr("semsearch.web.app.list_available_languages", languages)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            "/",
+            params=[
+                ("q", "query"),
+                ("search_dense", "false"),
+                ("search_bm25", "false"),
+                ("search_bm25", "true"),
+            ],
+        )
+
+    assert response.status_code == 200
+    assert 'name="search_dense" value="true" checked' not in response.text
+    assert 'name="search_bm25" value="true" checked' in response.text
+
+
+async def test_search_rejects_request_without_a_retriever(monkeypatch):
+    app = create_app()
+    app.state.pool = Pool()
+
+    async def fail_search(value: str, **kwargs):
+        raise AssertionError("search without a retriever must not run")
+
+    monkeypatch.setattr("semsearch.web.app.search", fail_search)
+    monkeypatch.setattr("semsearch.web.app.list_available_languages", languages)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            "/",
+            params={
+                "q": "query",
+                "search_dense": "false",
+                "search_bm25": "false",
+            },
+        )
+
+    assert response.status_code == 422
+    assert "Select at least one search method." in response.text
+    assert '<section class="results"' not in response.text
 
 
 async def test_search_rejects_malformed_language_code():

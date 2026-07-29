@@ -50,6 +50,8 @@ def test_web_template_shows_scores_with_shared_semantic_structure():
         active_page="search",
         q="query",
         encourage_long_content=True,
+        search_dense=True,
+        search_bm25=False,
         lang="fr",
         published_from="2025-01-01",
         published_to="2025-12-31",
@@ -82,6 +84,8 @@ def test_web_template_shows_scores_with_shared_semantic_structure():
     assert '<form class="search-form" action="/" method="get" role="search">' in html
     assert '<label class="visually-hidden" for="query">' in html
     assert 'name="encourage_long_content" value="true"' in html
+    assert 'name="search_dense" value="true" checked' in html
+    assert 'name="search_bm25" value="true" checked' not in html
     assert '<select id="language" name="lang">' in html
     assert 'name="published_from" value="2025-01-01"' in html
     assert 'name="published_to" value="2025-12-31"' in html
