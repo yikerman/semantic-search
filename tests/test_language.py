@@ -1,4 +1,5 @@
 import py3langid
+import pytest
 
 from semsearch.cli.ingest.extract import LANGUAGE_SAMPLE_CHARS, detect_language
 
@@ -37,3 +38,18 @@ def test_detect_language_uses_a_bounded_sample_and_normalizes_code(monkeypatch):
 
     assert detect_language("x" * (LANGUAGE_SAMPLE_CHARS + 20), title="Title") == "en"
     assert seen == [f"Title\n\n{'x' * LANGUAGE_SAMPLE_CHARS}"]
+
+
+@pytest.mark.parametrize("language", ["pcm", "yue", "zxx", "und", "PCM"])
+def test_detect_language_accepts_three_letter_codes(monkeypatch, language):
+    monkeypatch.setattr(py3langid, "classify", lambda text: (language, -1.0))
+
+    assert detect_language("Article text") == language.lower()
+
+
+@pytest.mark.parametrize("language", ["", "e", "english", "en-US", "123", "éé"])
+def test_detect_language_rejects_malformed_codes(monkeypatch, language):
+    monkeypatch.setattr(py3langid, "classify", lambda text: (language, -1.0))
+
+    with pytest.raises(ValueError, match="invalid language code"):
+        detect_language("Article text")

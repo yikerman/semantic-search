@@ -91,7 +91,7 @@ class EmptyCursor:
 
 class LanguageCursor:
     async def fetchall(self):
-        return [("en",), ("fr",)]
+        return [("en",), ("fr",), ("pcm",)]
 
 
 class LanguageConnection:
@@ -102,7 +102,7 @@ class LanguageConnection:
 async def test_available_languages_are_read_from_page_metadata():
     languages = await list_available_languages(cast(Any, LanguageConnection()))
 
-    assert languages == ["en", "fr"]
+    assert languages == ["en", "fr", "pcm"]
 
 
 class DenseConnection:

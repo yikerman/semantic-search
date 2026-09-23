@@ -170,7 +170,7 @@ def create_app() -> FastAPI:
         encourage_long_content: bool = False,
         search_dense: bool = True,
         search_bm25: bool = False,
-        lang: Annotated[str | None, Query(pattern=r"^(?:[A-Za-z]{2})?$")] = "en",
+        lang: Annotated[str | None, Query(pattern=r"^(?:[A-Za-z]{2,3})?$")] = "en",
         published_from: str = "",
         published_to: str = "",
     ):

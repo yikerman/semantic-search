@@ -121,7 +121,7 @@ async def list_available_languages(conn: psycopg.AsyncConnection) -> list[str]:
         language = row[0]
         if (
             not isinstance(language, str)
-            or len(language) != 2
+            or len(language) not in (2, 3)
             or not language.isascii()
             or not language.isalpha()
             or not language.islower()

@@ -218,6 +218,31 @@ async def test_search_rejects_malformed_language_code():
     assert response.status_code == 422
 
 
+async def test_search_accepts_three_letter_language(monkeypatch):
+    app = create_app()
+    app.state.pool = Pool()
+    app.state.embed_query = object()
+
+    async def available_languages(conn):
+        return ["en", "pcm"]
+
+    async def fake_search(value: str, **kwargs):
+        assert kwargs["filters"][0]("p").params == ("pcm",)
+        return []
+
+    monkeypatch.setattr("semsearch.web.app.search", fake_search)
+    monkeypatch.setattr(
+        "semsearch.web.app.list_available_languages", available_languages
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/", params={"q": "query", "lang": "PCM"})
+
+    assert response.status_code == 200
+    assert '<option value="pcm" selected>pcm</option>' in response.text
+
+
 async def test_search_accepts_empty_language_without_filter(monkeypatch):
     app = create_app()
     app.state.pool = Pool()

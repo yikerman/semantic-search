@@ -14,7 +14,7 @@ def detect_language(text: str, *, title: str | None = None) -> str:
     if title:
         sample = f"{title}\n\n{sample}"
     language, _score = py3langid.classify(sample)
-    if len(language) != 2 or not language.isascii() or not language.isalpha():
+    if len(language) not in (2, 3) or not language.isascii() or not language.isalpha():
         raise ValueError(f"invalid language code from py3langid: {language!r}")
     return language.lower()
 
