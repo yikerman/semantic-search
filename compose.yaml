@@ -38,6 +38,11 @@ services:
   daemon:
     restart: unless-stopped
     stop_grace_period: 90s
+    # Idle connections across many sites also consume file descriptors.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     build:
       context: .
       dockerfile: Containerfile
