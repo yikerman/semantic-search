@@ -1,3 +1,4 @@
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -8,29 +9,7 @@ from pgvector import HalfVector
 from psycopg import sql
 
 from semsearch.web.search.filters import SqlPredicate
-
-
-@dataclass(frozen=True, slots=True)
-class DenseCandidateRecord:
-    chunk_id: int
-    page_id: int
-    similarity: float
-
-
-@dataclass(frozen=True, slots=True)
-class Bm25CandidateRecord:
-    chunk_id: int
-    page_id: int
-    rank: float
-
-
-@dataclass(frozen=True, slots=True)
-class PageRecord:
-    page_id: int
-    url: str
-    title: str | None
-    content: str
-    published_at: datetime | None
+from semsearch.web.search.models import PageCandidate
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,13 +21,13 @@ class RecentActivity:
     detail: str | None
 
 
-def _page_record_from_row(row: tuple[object, ...]) -> PageRecord:
-    if len(row) != 5:
-        raise ValueError("invalid page database row")
-    page_id, url, title, content, published_at = row
+def _scored_page_from_row(row: tuple[object, ...]) -> tuple[PageCandidate, float]:
+    if len(row) != 6:
+        raise ValueError("invalid scored page database row")
+    page_id, url, title, content, published_at, score = row
     if (
-        not isinstance(page_id, int)
-        or isinstance(page_id, bool)
+        type(page_id) is not int
+        or page_id <= 0
         or not isinstance(url, str)
         or (title is not None and not isinstance(title, str))
         or not isinstance(content, str)
@@ -59,41 +38,12 @@ def _page_record_from_row(row: tuple[object, ...]) -> PageRecord:
                 or published_at.utcoffset() is None
             )
         )
+        or not isinstance(score, (int, float))
+        or isinstance(score, bool)
+        or not math.isfinite(score)
     ):
-        raise ValueError("invalid page database row")
-    return PageRecord(page_id, url, title, content, published_at)
-
-
-def _dense_candidate_from_row(row: tuple[object, ...]) -> DenseCandidateRecord:
-    if len(row) != 3:
-        raise ValueError("invalid dense candidate database row")
-    chunk_id, page_id, similarity = row
-    if (
-        not isinstance(chunk_id, int)
-        or isinstance(chunk_id, bool)
-        or not isinstance(page_id, int)
-        or isinstance(page_id, bool)
-        or not isinstance(similarity, (int, float))
-        or isinstance(similarity, bool)
-    ):
-        raise ValueError("invalid dense candidate database row")  # noqa: TRY004
-    return DenseCandidateRecord(chunk_id, page_id, float(similarity))
-
-
-def _bm25_candidate_from_row(row: tuple[object, ...]) -> Bm25CandidateRecord:
-    if len(row) != 3:
-        raise ValueError("invalid BM25 candidate database row")
-    chunk_id, page_id, rank = row
-    if (
-        not isinstance(chunk_id, int)
-        or isinstance(chunk_id, bool)
-        or not isinstance(page_id, int)
-        or isinstance(page_id, bool)
-        or not isinstance(rank, (int, float))
-        or isinstance(rank, bool)
-    ):
-        raise ValueError("invalid BM25 candidate database row")  # noqa: TRY004
-    return Bm25CandidateRecord(chunk_id, page_id, float(rank))
+        raise ValueError("invalid scored page database row")
+    return PageCandidate(page_id, url, title, content, published_at), float(score)
 
 
 def _recent_activity_from_row(row: tuple[object, ...]) -> RecentActivity:
@@ -148,21 +98,6 @@ async def list_available_languages(conn: psycopg.AsyncConnection) -> list[str]:
     return languages
 
 
-async def fetch_pages(
-    conn: psycopg.AsyncConnection, *, page_ids: Sequence[int]
-) -> dict[int, PageRecord]:
-    cur = await conn.execute(
-        """
-        SELECT id, url, title, content, published_at
-        FROM pages
-        WHERE id = ANY(%s)
-        """,
-        (list(page_ids),),
-    )
-    records = [_page_record_from_row(row) for row in await cur.fetchall()]
-    return {record.page_id: record for record in records}
-
-
 async def list_recent_activity(
     conn: psycopg.AsyncConnection, *, limit: int = 10
 ) -> list[RecentActivity]:
@@ -193,22 +128,22 @@ async def fetch_dense_candidate_rows(
     query_embedding: Sequence[float],
     predicate: SqlPredicate,
     limit: int,
-) -> list[DenseCandidateRecord]:
+) -> list[tuple[PageCandidate, float]]:
     embedding = HalfVector(list(query_embedding))
     cur = await conn.execute(
         sql.SQL(
             """
-        SELECT c.id, c.page_id, 1 - (c.embedding <=> %s) AS similarity
-        FROM chunks c
-        JOIN pages p ON p.id = c.page_id
+        SELECT p.id, p.url, p.title, p.content, p.published_at,
+               1 - (p.embedding <=> %s) AS similarity
+        FROM pages p
         WHERE p.indexed_at IS NOT NULL AND {predicate}
-        ORDER BY c.embedding <=> %s
+        ORDER BY p.embedding <=> %s
         LIMIT %s
         """
         ).format(predicate=predicate.clause),
         (embedding, *predicate.params, embedding, limit),
     )
-    return [_dense_candidate_from_row(row) for row in await cur.fetchall()]
+    return [_scored_page_from_row(row) for row in await cur.fetchall()]
 
 
 async def fetch_bm25_candidate_rows(
@@ -217,26 +152,25 @@ async def fetch_bm25_candidate_rows(
     query: str,
     predicate: SqlPredicate,
     limit: int,
-) -> list[Bm25CandidateRecord]:
+) -> list[tuple[PageCandidate, float]]:
     cur = await conn.execute(
         sql.SQL(
             """
         WITH search_query AS (
             SELECT to_bm25query(
-                'chunks_search_vector_bm25_idx'::regclass,
+                'pages_search_vector_bm25_idx'::regclass,
                 tokenize(%s, 'semsearch_llmlingua2')::bm25vector
             ) AS value
         )
-        SELECT c.id, c.page_id,
-               -(c.search_vector <&> search_query.value) AS rank
-        FROM chunks c
-        JOIN pages p ON p.id = c.page_id
+        SELECT p.id, p.url, p.title, p.content, p.published_at,
+               -(p.search_vector <&> search_query.value) AS rank
+        FROM pages p
         CROSS JOIN search_query
         WHERE p.indexed_at IS NOT NULL AND {predicate}
-        ORDER BY c.search_vector <&> search_query.value
+        ORDER BY p.search_vector <&> search_query.value
         LIMIT %s
         """
         ).format(predicate=predicate.clause),
         (query, *predicate.params, limit),
     )
-    return [_bm25_candidate_from_row(row) for row in await cur.fetchall()]
+    return [_scored_page_from_row(row) for row in await cur.fetchall()]

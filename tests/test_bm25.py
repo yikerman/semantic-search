@@ -3,7 +3,7 @@ from typing import Any, cast
 
 from semsearch.web import db
 from semsearch.web.search.filters import SqlPredicate
-from semsearch.web.search.models import RetrievalRequest
+from semsearch.web.search.models import PageCandidate, RetrievalRequest
 from semsearch.web.search.retrievers import retrieve_bm25
 
 
@@ -19,11 +19,7 @@ async def test_retrieve_bm25_returns_named_run_with_native_scores(monkeypatch):
     async def fetch_rows(conn, **kwargs):
         calls.append({"conn": conn, **kwargs})
         return [
-            db.Bm25CandidateRecord(
-                chunk_id=7,
-                page_id=3,
-                rank=0.25,
-            )
+            (PageCandidate(3, "https://example.com/post", "Post", "Whole post"), 0.25)
         ]
 
     monkeypatch.setattr(db, "fetch_bm25_candidate_rows", fetch_rows)

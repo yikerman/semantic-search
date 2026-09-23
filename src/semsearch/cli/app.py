@@ -11,7 +11,7 @@ from semsearch.cli import db
 from semsearch.cli.crawl.run import run_crawl
 from semsearch.cli.daemon import run_daemon
 from semsearch.cli.index import run_index
-from semsearch.cli.ingest.chunk import TokenizerError
+from semsearch.cli.ingest.document import TokenizerError
 from semsearch.cli.locks import (
     CRAWL_LOCK,
     INDEX_LOCK,
@@ -130,7 +130,7 @@ def crawl(retry_failed: bool = False) -> None:
 
 @app.command("index")
 def index_command() -> None:
-    """Chunk and embed a snapshot of stored, unindexed articles."""
+    """Embed a snapshot of stored, unindexed articles."""
 
     async def operation() -> tuple[int, int]:
         settings = get_settings()
@@ -168,13 +168,14 @@ def status() -> None:
         for label, value in (
             ("sites", stats.site_count),
             ("pages", stats.page_count),
-            ("chunks", stats.chunk_count),
+            ("indexed pages", stats.indexed_count),
             ("pending URLs", stats.queued_count),
             ("retrying URLs", stats.retrying_count),
             ("failed URLs", stats.failed_count),
             ("rejected URLs", stats.rejected_count),
             ("pending indexing", stats.pending_index_count),
             ("failed indexing", stats.failed_index_count),
+            ("rejected indexing", stats.rejected_index_count),
         ):
             typer.echo(f"{label}: {value}")
         for failure in failures:

@@ -9,13 +9,14 @@ import psycopg
 class IndexStats:
     site_count: int
     page_count: int
-    chunk_count: int
+    indexed_count: int
     queued_count: int
     retrying_count: int
     failed_count: int
     rejected_count: int = 0
     pending_index_count: int = 0
     failed_index_count: int = 0
+    rejected_index_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,15 +30,23 @@ async def fetch_index_stats(conn: psycopg.AsyncConnection) -> IndexStats:
     cur = await conn.execute(
         """
         SELECT (SELECT count(*) FROM sites),
-               (SELECT count(*) FROM pages),
-               COALESCE((SELECT n_live_tup FROM pg_stat_user_tables WHERE relname = 'chunks' AND schemaname = current_schema()), 0),
-               count(*) FILTER (WHERE status = 'pending'),
-               count(*) FILTER (WHERE status = 'pending' AND failed_batches > 0),
-               count(*) FILTER (WHERE status = 'failed'),
-               count(*) FILTER (WHERE status = 'rejected'),
-               (SELECT count(*) FROM pages WHERE indexed_at IS NULL),
-               (SELECT count(*) FROM pages WHERE indexed_at IS NULL AND index_error IS NOT NULL)
-        FROM article_urls
+               p.total, p.indexed, u.pending, u.retrying, u.failed, u.rejected,
+               p.pending, p.failed, p.rejected
+        FROM (
+            SELECT count(*) AS total,
+                   count(*) FILTER (WHERE indexed_at IS NOT NULL) AS indexed,
+                   count(*) FILTER (WHERE indexed_at IS NULL AND NOT index_rejected) AS pending,
+                   count(*) FILTER (WHERE indexed_at IS NULL AND NOT index_rejected AND index_error IS NOT NULL) AS failed,
+                   count(*) FILTER (WHERE index_rejected) AS rejected
+            FROM pages
+        ) p
+        CROSS JOIN (
+            SELECT count(*) FILTER (WHERE status = 'pending') AS pending,
+                   count(*) FILTER (WHERE status = 'pending' AND failed_batches > 0) AS retrying,
+                   count(*) FILTER (WHERE status = 'failed') AS failed,
+                   count(*) FILTER (WHERE status = 'rejected') AS rejected
+            FROM article_urls
+        ) u
         """
     )
     return _index_stats_from_row(await cur.fetchone())
@@ -47,14 +56,14 @@ def _index_stats_from_row(row: object) -> IndexStats:
     if (
         not isinstance(row, Sequence)
         or isinstance(row, (str, bytes))
-        or len(row) != 9
+        or len(row) != 10
         or any(
             not isinstance(value, int) or isinstance(value, bool) or value < 0
             for value in row
         )
     ):
         raise ValueError("invalid index stats database row")
-    values = cast(tuple[int, int, int, int, int, int, int, int, int], tuple(row))
+    values = cast(tuple[int, int, int, int, int, int, int, int, int, int], tuple(row))
     return IndexStats(*values)
 
 

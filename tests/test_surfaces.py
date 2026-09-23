@@ -179,7 +179,7 @@ async def test_status_page_shows_recent_activity(monkeypatch):
         return IndexStats(
             site_count=5,
             page_count=100,
-            chunk_count=400,
+            indexed_count=95,
             queued_count=20,
             retrying_count=3,
             failed_count=2,
@@ -228,7 +228,9 @@ async def test_status_page_shows_recent_activity(monkeypatch):
     assert "<caption>Index totals</caption>" in response.text
     assert '<th scope="row">pages</th>' in response.text
     assert "<td>100</td>" in response.text
-    assert "<td>~400</td>" in response.text
+    assert "<td>95</td>" in response.text
+    assert "indexed pages" in response.text
+    assert "rejected indexing" in response.text
     assert '<th scope="row">retrying URLs</th>' in response.text
     assert "<td>3</td>" in response.text
     assert "Recent activity" in response.text

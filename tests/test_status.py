@@ -1,11 +1,46 @@
+import sqlite3
+from contextlib import closing
 from typing import Any, cast
 
 from semsearch.share.status import IndexStats, fetch_index_stats, list_failed_articles
 
 
+async def test_status_aggregates_empty_and_mixed_outcomes():
+    # These standard SQL aggregates can run locally without a Postgres service.
+    with closing(sqlite3.connect(":memory:")) as database:
+        database.executescript("""
+            CREATE TABLE sites (id int);
+            CREATE TABLE pages (indexed_at text, index_rejected boolean, index_error text);
+            CREATE TABLE article_urls (status text, failed_batches int);
+        """)
+
+        class Connection:
+            async def execute(self, query):
+                self.row = database.execute(query).fetchone()
+                return self
+
+            async def fetchone(self):
+                return self.row
+
+        conn = cast(Any, Connection())
+        assert await fetch_index_stats(conn) == IndexStats(0, 0, 0, 0, 0, 0)
+        database.executescript("""
+            INSERT INTO sites VALUES (1);
+            INSERT INTO pages VALUES
+                ('2026-01-01', false, NULL),
+                (NULL, false, NULL),
+                (NULL, false, 'provider unavailable'),
+                (NULL, true, 'too long');
+            INSERT INTO article_urls VALUES
+                ('stored', 0), ('pending', 0), ('pending', 1),
+                ('failed', 3), ('rejected', 0);
+        """)
+        assert await fetch_index_stats(conn) == IndexStats(1, 4, 1, 2, 1, 1, 1, 2, 1, 1)
+
+
 class StatsCursor:
     async def fetchone(self):
-        return (5, 100, 400, 20, 3, 2, 4, 5, 1)
+        return (5, 100, 93, 20, 3, 2, 4, 5, 1, 2)
 
 
 class StatsConnection:
@@ -17,18 +52,20 @@ class StatsConnection:
         return StatsCursor()
 
 
-async def test_index_stats_estimate_chunks_and_scan_article_urls_once():
+async def test_index_stats_count_pages_and_separate_rejections():
     conn = StatsConnection()
 
     stats = await fetch_index_stats(cast(Any, conn))
 
-    assert stats == IndexStats(5, 100, 400, 20, 3, 2, 4, 5, 1)
+    assert stats == IndexStats(5, 100, 93, 20, 3, 2, 4, 5, 1, 2)
     assert conn.query is not None
-    assert "FROM pg_stat_user_tables" in conn.query
-    assert "n_live_tup" in conn.query
+    assert "indexed_at IS NOT NULL" in conn.query
+    assert "NOT index_rejected" in conn.query
+    assert "WHERE index_rejected" in conn.query
     assert "indexed_at IS NULL" in conn.query
     assert "index_error IS NOT NULL" in conn.query
     assert conn.query.count("FROM article_urls") == 1
+    assert conn.query.count("FROM pages") == 1
 
 
 async def test_index_stats_reject_invalid_database_rows():

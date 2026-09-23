@@ -42,7 +42,7 @@ CREATE TABLE origin_cooldowns (
     until_at timestamptz NOT NULL
 );
 
--- canonical extracted pages divided into derived retrieval chunks
+-- canonical articles and their page-level retrieval data
 CREATE TABLE pages (
     id bigserial PRIMARY KEY,
     site_id bigint NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
@@ -53,10 +53,17 @@ CREATE TABLE pages (
     language text,
     fetched_at timestamptz NOT NULL,
     indexed_at timestamptz,
-    index_error text
+    index_error text,
+    index_rejected boolean NOT NULL DEFAULT false,
+    embedding halfvec({embedding_dim}),
+    search_vector bm25vector,
+    CHECK (
+        (indexed_at IS NULL AND embedding IS NULL AND search_vector IS NULL)
+        OR (indexed_at IS NOT NULL AND embedding IS NOT NULL AND search_vector IS NOT NULL AND NOT index_rejected)
+    )
 );
 
-CREATE INDEX pages_pending_index_idx ON pages (id) WHERE indexed_at IS NULL;
+CREATE INDEX pages_pending_index_idx ON pages (id) WHERE indexed_at IS NULL AND NOT index_rejected;
 
 CREATE INDEX pages_site_idx ON pages (site_id);
 
@@ -71,19 +78,10 @@ CREATE INDEX pages_language_idx
     ON pages (language)
     WHERE language IS NOT NULL;
 
--- each chunk identifies a span of its page and holds its retrieval data
-CREATE TABLE chunks (
-    id bigserial PRIMARY KEY,
-    page_id bigint NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-    start_offset int NOT NULL CHECK (start_offset >= 0),
-    content_length int NOT NULL CHECK (content_length > 0),
-    embedding halfvec({embedding_dim}) NOT NULL,
-    search_vector bm25vector NOT NULL,
-    UNIQUE (page_id, start_offset)
-);
+CREATE INDEX pages_embedding_hnsw_idx
+    ON pages USING hnsw (embedding halfvec_cosine_ops)
+    WHERE indexed_at IS NOT NULL;
 
-CREATE INDEX chunks_embedding_hnsw_idx
-    ON chunks USING hnsw (embedding halfvec_cosine_ops);
-
-CREATE INDEX chunks_search_vector_bm25_idx
-    ON chunks USING bm25 (search_vector bm25_ops);
+CREATE INDEX pages_search_vector_bm25_idx
+    ON pages USING bm25 (search_vector bm25_ops)
+    WHERE indexed_at IS NOT NULL;

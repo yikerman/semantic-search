@@ -13,7 +13,6 @@ class FeedError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class ParsedFeed:
     urls: list[str]
-    home_url: str | None
     history_url: str | None
     is_wordpress: bool
     is_complete: bool
@@ -47,12 +46,10 @@ def parse_feed(body: bytes, *, url: str, headers: dict[str, str]) -> ParsedFeed:
 
     feed = parsed.feed
     links = feed.get("links", [])
-    home_url = _feed_link(links, ("alternate",))
     history_url = _feed_link(links, ("prev-archive", "next"))
     generator = str(feed.get("generator") or "").lower()
     return ParsedFeed(
         urls=list(dict.fromkeys(urls)),
-        home_url=home_url,
         history_url=history_url,
         is_wordpress="wordpress" in generator,
         is_complete="fh_complete" in feed,

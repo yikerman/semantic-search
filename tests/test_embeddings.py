@@ -5,24 +5,15 @@ import pytest
 from semsearch.share.embeddings import (
     EmbeddingError,
     OpenAICompatEmbeddings,
-    _parse_embeddings,
+    _parse_embedding,
 )
 
 
-def test_parse_embeddings_orders_and_normalizes_vectors():
-    vectors = _parse_embeddings(
-        {
-            "data": [
-                {"index": 1, "embedding": [3, 4]},
-                {"index": 0, "embedding": [1, 2]},
-            ]
-        },
-        expected_count=2,
-        expected_dim=2,
-        model="test",
+def test_parse_embedding_normalizes_vector():
+    vector = _parse_embedding(
+        {"data": [{"index": 0, "embedding": [1, 2]}]}, expected_dim=2, model="test"
     )
-
-    assert vectors == [[1.0, 2.0], [3.0, 4.0]]
+    assert vector == [1.0, 2.0]
 
 
 @pytest.mark.parametrize(
@@ -30,18 +21,21 @@ def test_parse_embeddings_orders_and_normalizes_vectors():
     [
         None,
         {},
+        {"data": []},
+        {"data": [{"index": 0, "embedding": [1.0]}, {"index": 1, "embedding": [2.0]}]},
         {"data": [None]},
+        {"data": [{"index": 0, "embedding": []}]},
+        {"data": [{"index": 0, "embedding": [True]}]},
         {"data": [{"index": True, "embedding": [1.0]}]},
         {"data": [{"index": 0, "embedding": [float("nan")]}]},
         {"data": [{"index": 0, "embedding": [10**10000]}]},
         {"data": [{"index": 1, "embedding": [1.0]}]},
     ],
 )
-def test_parse_embeddings_rejects_invalid_provider_payloads(payload: object):
+def test_parse_embedding_rejects_invalid_provider_payloads(payload: object):
     with pytest.raises(EmbeddingError):
-        _parse_embeddings(
+        _parse_embedding(
             payload,
-            expected_count=1,
             expected_dim=1,
             model="test",
         )
@@ -61,7 +55,6 @@ async def test_embedding_client_wraps_invalid_json():
 
     embedder = cast(Any, OpenAICompatEmbeddings.__new__(OpenAICompatEmbeddings))
     embedder.model = "test"
-    embedder.batch_size = 1
     embedder.query_instruction = ""
     embedder.expected_dim = 1
     embedder.max_retries = 1
@@ -102,7 +95,6 @@ class RecordingClient:
 def recording_embedder(client: Any, *, query_instruction=""):
     embedder = cast(Any, OpenAICompatEmbeddings.__new__(OpenAICompatEmbeddings))
     embedder.model = "test"
-    embedder.batch_size = 32
     embedder.query_instruction = query_instruction
     embedder.expected_dim = 1
     embedder.max_retries = 1
@@ -126,10 +118,10 @@ async def test_embedding_client_reports_provider_error_payload():
     embedder = recording_embedder(Client())
 
     with pytest.raises(EmbeddingError, match="has no data array") as raised:
-        await embedder.embed_documents(["one", "two"])
+        await embedder.embed_document("one")
 
     message = str(raised.value)
-    assert "HTTP 200, model=test, inputs=2, request_id=request-123" in message
+    assert "HTTP 200, model=test, inputs=1, request_id=request-123" in message
     assert "response_keys=['error']" in message
     assert "rate limited" in message
 
@@ -156,13 +148,14 @@ async def test_embedding_client_retains_error_after_http_retries():
     assert "rate limited" in message
 
 
-async def test_document_embeddings_send_text():
+async def test_document_embedding_sends_whole_text_without_query_instruction():
     client = RecordingClient()
-    embedder = recording_embedder(client)
+    embedder = recording_embedder(client, query_instruction="find posts")
 
-    await embedder.embed_documents(["one", "three"])
+    vector = await embedder.embed_document("Title\n\nWhole post")
 
-    assert client.payloads == [{"model": "test", "input": ["one", "three"]}]
+    assert vector == [1.0]
+    assert client.payloads == [{"model": "test", "input": ["Title\n\nWhole post"]}]
 
 
 async def test_query_embeddings_send_instructed_text():

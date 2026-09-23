@@ -58,4 +58,4 @@ docker compose run --rm daemon site add https://some.blog/ --sitemap auto --feed
 docker compose exec daemon /app/.venv/bin/python scripts/import_indieblog_feeds.py --dry-run
 ```
 
-Changing the chunking algorithm, embedding dimension, or model requires re-indexing. TODO
+Changing the embedding dimension or model requires re-indexing.

@@ -9,7 +9,6 @@ from semsearch.share.config import Settings
 from semsearch.web.db import (
     fetch_bm25_candidate_rows,
     fetch_dense_candidate_rows,
-    fetch_pages,
     list_available_languages,
     list_recent_activity,
 )
@@ -19,7 +18,7 @@ from semsearch.web.search.filters import SqlPredicate
 def test_schema_uses_halfvec_hnsw_cosine_index():
     schema = load_schema_sql(Settings(embedding_model="test-model", embedding_dim=2))
 
-    assert "embedding halfvec(2) NOT NULL" in schema
+    assert "embedding halfvec(2)" in schema
     assert "USING hnsw (embedding halfvec_cosine_ops)" in schema
     assert "index_meta" not in schema
 
@@ -35,18 +34,21 @@ def test_schema_initializes_vectorchord_bm25_once():
     assert "IF NOT EXISTS" not in schema
 
 
-def test_schema_keeps_canonical_page_content_and_derived_chunk_spans():
+def test_schema_stores_retrieval_data_on_pages():
     schema = load_schema_sql(Settings(embedding_model="test-model", embedding_dim=2))
-    chunks = schema.split("CREATE TABLE chunks", 1)[1].split(");", 1)[0]
-
+    assert "CREATE TABLE chunks" not in schema
+    assert "start_offset" not in schema
     assert "content text NOT NULL" in schema
-    assert "start_offset int NOT NULL CHECK (start_offset >= 0)" in chunks
-    assert "content_length int NOT NULL CHECK (content_length > 0)" in chunks
-    assert "search_vector bm25vector NOT NULL" in chunks
-    assert "UNIQUE (page_id, start_offset)" in chunks
-    assert "content text" not in chunks
-    assert "GENERATED ALWAYS" not in chunks
+    assert "embedding halfvec(2)" in schema
+    assert "search_vector bm25vector" in schema
     assert "USING bm25 (search_vector bm25_ops)" in schema
+    assert (
+        "indexed_at IS NULL AND embedding IS NULL AND search_vector IS NULL" in schema
+    )
+    assert (
+        "indexed_at IS NOT NULL AND embedding IS NOT NULL AND search_vector IS NOT NULL"
+        in schema
+    )
 
 
 def test_schema_separates_discovery_storage_and_indexing():
@@ -117,7 +119,7 @@ async def test_dense_query_accepts_immutable_embedding_sequence():
 
 class RowCursor:
     async def fetchall(self):
-        return [(7, 3, 0.25)]
+        return [(3, "https://example.com/post", "Post", "Whole post", None, 0.25)]
 
 
 class RecordingConnection:
@@ -144,89 +146,77 @@ async def test_bm25_query_uses_vectorchord_and_preserves_filter_params():
     assert conn.query is not None
     query = conn.query.as_string()
     assert "to_bm25query(" in query
-    assert "'chunks_search_vector_bm25_idx'::regclass" in query
+    assert "'pages_search_vector_bm25_idx'::regclass" in query
     assert "tokenize(%s, 'semsearch_llmlingua2')::bm25vector" in query
-    assert "-(c.search_vector <&> search_query.value) AS rank" in query
-    assert "ORDER BY c.search_vector <&> search_query.value" in query
+    assert "-(p.search_vector <&> search_query.value) AS rank" in query
+    assert "ORDER BY p.search_vector <&> search_query.value" in query
     assert "ORDER BY rank DESC" not in query
     assert "p.site_id = %s" in query
     assert conn.params == ('postgres "full text"', 3, 12)
-    assert rows[0].chunk_id == 7
-    assert rows[0].rank == 0.25
+    assert rows[0][0].page_id == 3
+    assert rows[0][1] == 0.25
+    assert "FROM pages p" in query
+    assert "JOIN pages" not in query
+    assert "p.indexed_at IS NOT NULL" in query
 
 
-class PageCursor:
-    async def fetchall(self):
-        return [
-            (
-                3,
-                "https://example.com/three",
-                "Three",
-                "full page three",
-                datetime(2025, 1, 2, tzinfo=UTC),
-            ),
-            (5, "https://example.com/five", None, "full page five", None),
-        ]
-
-
-class PageConnection:
-    def __init__(self) -> None:
-        self.query = None
-        self.params = None
-
-    async def execute(self, query, params):
-        self.query = query
-        self.params = params
-        return PageCursor()
-
-
-async def test_page_lookup_returns_validated_canonical_content():
-    conn = PageConnection()
-
-    pages = await fetch_pages(cast(Any, conn), page_ids=(3, 5))
-
+async def test_dense_query_returns_full_pages_and_preserves_filter_params():
+    conn = RecordingConnection()
+    rows = await fetch_dense_candidate_rows(
+        cast(Any, conn),
+        query_embedding=(1.0, 0.0),
+        predicate=SqlPredicate(sql.SQL("p.language = %s"), ("en",)),
+        limit=12,
+    )
     assert conn.query is not None
-    assert "SELECT id, url, title, content, published_at" in conn.query
-    assert "FROM pages" in conn.query
-    assert conn.params == ([3, 5],)
-    assert pages[3].content == "full page three"
-    assert pages[3].published_at == datetime(2025, 1, 2, tzinfo=UTC)
-    assert pages[5].title is None
-    assert pages[5].published_at is None
+    assert conn.params is not None
+    query = conn.query.as_string()
+    assert "FROM pages p" in query
+    assert "JOIN" not in query
+    assert "p.indexed_at IS NOT NULL" in query
+    assert "p.language = %s" in query
+    assert "ORDER BY p.embedding <=> %s" in query
+    assert conn.params[1] == "en"
+    assert conn.params[-1] == 12
+    page, score = rows[0]
+    assert page.content == "Whole post"
+    assert score == 0.25
 
 
-async def test_page_lookup_rejects_invalid_database_rows():
-    class InvalidPageCursor:
-        async def fetchall(self):
-            return [(True, "https://example.com", None, "content")]
-
-    class InvalidPageConnection:
+@pytest.mark.parametrize(
+    "row",
+    [
+        (True, "https://example.com", None, "content", None, 0.5),
+        (1, "https://example.com", None, "content", datetime(2025, 1, 2), 0.5),  # noqa: DTZ001
+        (1, "https://example.com", None, "content", None, float("nan")),
+        (1, "https://example.com", None, "content", None, True),
+        (1, "https://example.com", None, "content"),
+    ],
+)
+@pytest.mark.parametrize("kind", ["dense", "bm25"])
+async def test_retrieval_validates_database_rows(row, kind):
+    class InvalidConnection:
         async def execute(self, query, params):
-            return InvalidPageCursor()
+            return self
 
-    with pytest.raises(ValueError, match="invalid page database row"):
-        await fetch_pages(cast(Any, InvalidPageConnection()), page_ids=(1,))
-
-
-async def test_page_lookup_rejects_naive_publication_timestamp():
-    class InvalidPageCursor:
         async def fetchall(self):
-            return [
-                (
-                    1,
-                    "https://example.com",
-                    None,
-                    "content",
-                    datetime(2025, 1, 2),  # noqa: DTZ001
-                )
-            ]
+            return [row]
 
-    class InvalidPageConnection:
-        async def execute(self, query, params):
-            return InvalidPageCursor()
-
-    with pytest.raises(ValueError, match="invalid page database row"):
-        await fetch_pages(cast(Any, InvalidPageConnection()), page_ids=(1,))
+    with pytest.raises(ValueError, match="invalid scored page database row"):
+        if kind == "dense":
+            await fetch_dense_candidate_rows(
+                cast(Any, InvalidConnection()),
+                query_embedding=(1.0, 0.0),
+                predicate=SqlPredicate(sql.SQL("TRUE")),
+                limit=1,
+            )
+        else:
+            await fetch_bm25_candidate_rows(
+                cast(Any, InvalidConnection()),
+                query="test",
+                predicate=SqlPredicate(sql.SQL("TRUE")),
+                limit=1,
+            )
 
 
 class ActivityCursor:

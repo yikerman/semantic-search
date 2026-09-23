@@ -13,7 +13,7 @@ Code is organized by ownership under three packages:
   crawling, and indexing; `semsearch.cli.crawl` owns Scrapy batches,
   `semsearch.cli.index` indexes canonical pages, `semsearch.cli.daemon` schedules
   recurring jobs, and `semsearch.cli.ingest`
-  holds parsing, extraction and chunking functions
+  holds parsing, extraction and document validation functions
 - `semsearch.web`: FastAPI app, web database reads, search pipeline, and
   templates
 
@@ -39,7 +39,7 @@ general-purpose and independent of either surface.
 
 `semsearch.web.search.pipeline.search()` compiles filters, embeds the query,
 builds a candidate union, runs optional rerankers, applies RRF, then returns the
-best chunk per page.
+ranked pages.
 
 Score contract:
 
@@ -69,8 +69,12 @@ and language detection run in a bounded Pebble process pool with killable tasks.
 Canonical page insertion and URL completion are atomic. Source/body/text limits
 produce recorded outcomes. Origin cooldowns survive batch restarts.
 
-`semsearch index` takes a snapshot of unindexed canonical pages, chunks text with
-the pinned tokenizer, embeds chunks, and atomically stores chunks plus `indexed_at`.
+`semsearch index` takes a snapshot of unindexed canonical pages and embeds each
+complete article (title plus body) once. The pinned tokenizer enforces the configured
+input limit, reserving 32 tokens for provider formatting. Oversized posts retain
+canonical text and are marked `index_rejected` rather than truncated or retried.
+The embedding, page-level BM25 vector and `indexed_at` are published atomically.
+Both retrievers return pages directly; there is no chunk storage or aggregation.
 Embedding failure never requires another crawl. Search sees only indexed pages.
 
 One crawl and one index command may run concurrently; advisory locks prevent
@@ -89,9 +93,9 @@ Version 1.0 requires a fresh database; do not add legacy migrations or adapters.
 - One database holds one embedding space. Changing `EMBEDDING_MODEL` or
   `EMBEDDING_DIM` means wiping and re-indexing.
 - Query embeddings use `QUERY_INSTRUCTION`; document embeddings use page title
-  plus chunk text.
-- Document chunks use fixed token windows from the pinned embedding tokenizer.
-  Query and document embedding inputs are sent to the embedding API as text.
+  plus the full article text.
+- The pinned embedding tokenizer checks whole-document input length without
+  truncation. Query and document embedding inputs are sent to the API as text.
 - Dense retrieval uses a pgvector `halfvec` HNSW cosine ANN index. Keep
   embeddings within pgvector halfvec limits; use MRL truncation if a model
   exceeds them.

@@ -1,4 +1,3 @@
-from contextlib import AbstractAsyncContextManager
 from typing import Any, cast
 
 from semsearch.cli import db
@@ -41,49 +40,16 @@ async def test_delete_site_configs_deletes_origins_in_one_statement():
     assert removed == ["https://a.example", "https://b.example"]
 
 
-class ChunkCursor(AbstractAsyncContextManager):
-    def __init__(self) -> None:
-        self.query = ""
-        self.rows = []
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc_info):
-        return None
-
-    async def executemany(self, query, rows):
-        self.query = query
-        self.rows = rows
-
-
-class ChunkConnection:
-    def __init__(self) -> None:
-        self.cur = ChunkCursor()
-
-    def cursor(self):
-        return self.cur
-
-    async def execute(self, query, params):
-        raise AssertionError("append-only chunk insertion must not delete")
-
-
-async def test_insert_page_chunks_never_replaces_existing_chunks():
-    conn = ChunkConnection()
-
-    await db.insert_page_chunks(
-        cast(Any, conn),
-        page_id=3,
-        chunks=[db.ChunkInsert(4, "content", (1.0, 0.0))],
+async def test_index_publication_updates_only_unindexed_pages():
+    conn = PageInsertConnection()
+    await db.publish_page_index(
+        cast(Any, conn), page_id=3, text="Title\n\nWhole post", embedding=(1.0, 0.0)
     )
-
-    assert len(conn.cur.rows) == 1
-    assert "(page_id, start_offset, content_length, embedding, search_vector)" in (
-        conn.cur.query
-    )
-    assert "tokenize(%s, 'semsearch_llmlingua2')::bm25vector" in conn.cur.query
-    assert conn.cur.rows[0][1:3] == (4, 7)
-    assert conn.cur.rows[0][-1] == "content"
+    assert "UPDATE pages SET embedding = %s" in conn.query
+    assert "tokenize(%s, 'semsearch_llmlingua2')::bm25vector" in conn.query
+    assert "indexed_at = now(), index_error = NULL" in conn.query
+    assert "WHERE id = %s AND indexed_at IS NULL AND NOT index_rejected" in conn.query
+    assert conn.params[1:] == ("Title\n\nWhole post", 3)
 
 
 class PageInsertConnection:

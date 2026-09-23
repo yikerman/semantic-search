@@ -1,25 +1,10 @@
 from collections.abc import Sequence
 
-from semsearch.web.search.models import ChunkCandidate, PageCandidate, RankedRun
-
-
-def union_chunk_candidates(
-    runs: Sequence[RankedRun[ChunkCandidate]],
-) -> list[ChunkCandidate]:
-    candidates: dict[int, ChunkCandidate] = {}
-    scores: dict[int, dict[str, float]] = {}
-    for run in runs:
-        for candidate in run.candidates:
-            candidates.setdefault(candidate.chunk_id, candidate)
-            scores.setdefault(candidate.chunk_id, {}).update(candidate.scores)
-    return [
-        candidate.with_scores(scores[chunk_id])
-        for chunk_id, candidate in candidates.items()
-    ]
+from semsearch.web.search.models import PageCandidate, RankedRun
 
 
 def union_page_candidates(
-    runs: Sequence[RankedRun[PageCandidate]],
+    runs: Sequence[RankedRun],
 ) -> list[PageCandidate]:
     candidates: dict[int, PageCandidate] = {}
     scores: dict[int, dict[str, float]] = {}
@@ -34,7 +19,7 @@ def union_page_candidates(
 
 
 def reciprocal_rank_fusion(
-    runs: Sequence[RankedRun[PageCandidate]], *, k: int = 60
+    runs: Sequence[RankedRun], *, k: int = 60
 ) -> list[PageCandidate]:
     candidates = {
         candidate.page_id: candidate for candidate in union_page_candidates(runs)

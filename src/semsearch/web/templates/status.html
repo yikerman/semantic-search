@@ -16,8 +16,8 @@
       <td>{{ stats.page_count }}</td>
     </tr>
     <tr>
-      <th scope="row">chunks</th>
-      <td>~{{ stats.chunk_count }}</td>
+      <th scope="row">indexed pages</th>
+      <td>{{ stats.indexed_count }}</td>
     </tr>
     <tr>
       <th scope="row">pending URLs</th>
@@ -34,6 +34,7 @@
     <tr><th scope="row">rejected URLs</th><td>{{ stats.rejected_count }}</td></tr>
     <tr><th scope="row">pending indexing</th><td>{{ stats.pending_index_count }}</td></tr>
     <tr><th scope="row">failed indexing</th><td>{{ stats.failed_index_count }}</td></tr>
+    <tr><th scope="row">rejected indexing</th><td>{{ stats.rejected_index_count }}</td></tr>
   </tbody>
 </table>
 

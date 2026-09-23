@@ -40,7 +40,6 @@ def test_parse_atom_resolves_relative_urls_and_archive_link():
     )
 
     assert parsed.urls == ["https://example.com/blog/posts/one"]
-    assert parsed.home_url is None
     assert parsed.history_url == "https://example.com/blog/archive-1.atom"
 
 

@@ -4,15 +4,12 @@ from psycopg_pool import AsyncConnectionPool
 
 from semsearch.share.embeddings import EmbedQuery
 from semsearch.share.util import map_concurrently
-from semsearch.web import db
 from semsearch.web.search.filters import SearchFilter
 from semsearch.web.search.fusion import (
     reciprocal_rank_fusion,
-    union_chunk_candidates,
     union_page_candidates,
 )
 from semsearch.web.search.models import (
-    ChunkCandidate,
     Fusion,
     PageCandidate,
     RankedRun,
@@ -23,32 +20,9 @@ from semsearch.web.search.models import (
 )
 
 
-def aggregate_page_run(
-    run: RankedRun[ChunkCandidate], pages: dict[int, PageCandidate]
-) -> RankedRun[PageCandidate]:
-    scores_by_page: dict[int, list[float]] = {}
-    for candidate in run.candidates:
-        scores_by_page.setdefault(candidate.page_id, []).append(
-            candidate.scores[run.name]
-        )
-
-    def aggregate(native_scores: list[float]) -> float:
-        top_scores = sorted(native_scores, reverse=True)[:3]
-        return sum(score * (0.1**index) for index, score in enumerate(top_scores))
-
-    return make_run(
-        run.name,
-        run.weight,
-        (
-            (pages[page_id], aggregate(native_scores))
-            for page_id, native_scores in scores_by_page.items()
-        ),
-    )
-
-
 async def rerank_by_length(
     query: str, candidates: Sequence[PageCandidate]
-) -> RankedRun[PageCandidate]:
+) -> RankedRun:
     del query
     return make_run(
         "length",
@@ -78,24 +52,8 @@ async def search(
         limit=len(retrievers),
         func=lambda retrieve: retrieve(request, pool),
     )
-    chunk_candidates = union_chunk_candidates(retrieval_runs)
-    if not chunk_candidates:
+    merged_pages = union_page_candidates(retrieval_runs)
+    if not merged_pages:
         return []
-
-    page_ids = list(dict.fromkeys(candidate.page_id for candidate in chunk_candidates))
-    async with pool.connection() as conn:
-        page_records = await db.fetch_pages(conn, page_ids=page_ids)
-    pages = {
-        page_id: PageCandidate(
-            page_id=page_id,
-            url=record.url,
-            title=record.title,
-            content=record.content,
-            published_at=record.published_at,
-        )
-        for page_id, record in page_records.items()
-    }
-    page_retrieval_runs = [aggregate_page_run(run, pages) for run in retrieval_runs]
-    merged_pages = union_page_candidates(page_retrieval_runs)
     reranker_runs = [await reranker(query, merged_pages) for reranker in rerankers]
-    return fusion([*page_retrieval_runs, *reranker_runs])[:limit]
+    return fusion([*retrieval_runs, *reranker_runs])[:limit]

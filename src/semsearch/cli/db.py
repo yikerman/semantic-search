@@ -1,6 +1,5 @@
 import importlib.resources
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from collections.abc import Sequence
 from datetime import datetime
 from typing import LiteralString, cast
 
@@ -8,13 +7,6 @@ import psycopg
 from pgvector import HalfVector
 
 from semsearch.share.config import Settings
-
-
-@dataclass(frozen=True, slots=True)
-class ChunkInsert:
-    start_offset: int
-    content: str
-    embedding: Sequence[float]
 
 
 def load_schema_sql(settings: Settings) -> LiteralString:
@@ -51,11 +43,6 @@ async def delete_site_configs(
     return sorted(row[0] for row in rows)
 
 
-async def page_exists(conn: psycopg.AsyncConnection, *, url: str) -> bool:
-    cur = await conn.execute("SELECT 1 FROM pages WHERE url = %s", (url,))
-    return await cur.fetchone() is not None
-
-
 async def insert_page(
     conn: psycopg.AsyncConnection,
     *,
@@ -69,8 +56,7 @@ async def insert_page(
     """Insert a new page, returning its id, or ``None`` if the URL already exists.
 
     URL is page identity and existing URLs are append-only, so a conflict means
-    another writer already indexed this page; the caller must skip rather than
-    overwrite its chunks.
+    another writer already stored this page; preserve its canonical content.
     """
     cur = await conn.execute(
         """
@@ -86,30 +72,17 @@ async def insert_page(
     return None if row is None else row[0]
 
 
-async def insert_page_chunks(
+async def publish_page_index(
     conn: psycopg.AsyncConnection,
     *,
     page_id: int,
-    chunks: Iterable[ChunkInsert],
+    text: str,
+    embedding: Sequence[float],
 ) -> None:
-    async with conn.cursor() as cur:
-        await cur.executemany(
-            """
-            INSERT INTO chunks
-                (page_id, start_offset, content_length, embedding, search_vector)
-            VALUES (
-                %s, %s, %s, %s,
-                tokenize(%s, 'semsearch_llmlingua2')::bm25vector
-            )
-            """,
-            [
-                (
-                    page_id,
-                    chunk.start_offset,
-                    len(chunk.content),
-                    HalfVector(list(chunk.embedding)),
-                    chunk.content,
-                )
-                for chunk in chunks
-            ],
-        )
+    await conn.execute(
+        """UPDATE pages SET embedding = %s,
+        search_vector = tokenize(%s, 'semsearch_llmlingua2')::bm25vector,
+        indexed_at = now(), index_error = NULL
+        WHERE id = %s AND indexed_at IS NULL AND NOT index_rejected""",
+        (HalfVector(list(embedding)), text, page_id),
+    )

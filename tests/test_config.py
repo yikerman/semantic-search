@@ -10,9 +10,7 @@ from semsearch.share.config import Settings
     ("field", "value"),
     [
         ("embedding_dim", 0),
-        ("embedding_batch_size", 0),
-        ("chunk_tokens", 0),
-        ("chunk_token_overlap", -1),
+        ("embedding_max_tokens", 32),
         ("crawl_delay_seconds", -1),
         ("crawl_timeout_seconds", 0),
         ("crawl_concurrency", 0),
@@ -30,11 +28,6 @@ def test_settings_reject_invalid_numeric_values(field: str, value: object):
 
     with pytest.raises(ValidationError):
         Settings(**values)
-
-
-def test_settings_reject_chunk_overlap_at_least_window_size():
-    with pytest.raises(ValidationError, match="CHUNK_TOKEN_OVERLAP"):
-        Settings(chunk_tokens=100, chunk_token_overlap=100)
 
 
 @pytest.mark.parametrize(
