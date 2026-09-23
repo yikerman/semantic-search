@@ -10,48 +10,37 @@ $$);
 CREATE TABLE sites (
     id bigserial PRIMARY KEY,
     base_url text UNIQUE NOT NULL,
-    sitemap_url text,
-    feed_url text NOT NULL,
-    last_polled_at timestamptz,
-    next_poll_at timestamptz,
-    feed_etag text,
-    feed_last_modified text,
-    poll_failures int NOT NULL DEFAULT 0,
-    poll_lease_until timestamptz,
-    poll_lease_token uuid,
-    sync_error text,
-    history_pending boolean NOT NULL DEFAULT false,
-    history_error text,
+    start_url text NOT NULL,
+    feed_url text NOT NULL DEFAULT 'auto',
+    sitemap_url text NOT NULL DEFAULT 'auto',
+    history_complete boolean NOT NULL DEFAULT false,
+    last_crawled_at timestamptz,
+    last_error text,
     added_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX sites_next_poll_idx ON sites (next_poll_at);
-
--- a site has several to-crawl pages
-CREATE TABLE crawl_jobs (
+CREATE TABLE article_urls (
     id bigserial PRIMARY KEY,
     site_id bigint NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
     url text UNIQUE NOT NULL,
     source text NOT NULL,
-    attempt_count int NOT NULL DEFAULT 0,
-    next_attempt_at timestamptz DEFAULT now(),
-    lease_until timestamptz,
-    lease_token uuid,
+    status text NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'stored', 'rejected', 'failed')),
+    failed_batches int NOT NULL DEFAULT 0 CHECK (failed_batches >= 0),
+    next_attempt_at timestamptz NOT NULL DEFAULT now(),
     last_error text,
-    failed_at timestamptz,
-    discovered_at timestamptz NOT NULL DEFAULT now()
+    discovered_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX article_urls_pending_idx ON article_urls (site_id, next_attempt_at, id)
+    WHERE status = 'pending';
+CREATE INDEX article_urls_failure_idx ON article_urls (updated_at DESC)
+    WHERE status IN ('rejected', 'failed');
 
-CREATE INDEX crawl_jobs_ready_idx
-    ON crawl_jobs (next_attempt_at, lease_until)
-    WHERE next_attempt_at IS NOT NULL;
-
-CREATE INDEX crawl_jobs_site_idx
-    ON crawl_jobs (site_id, next_attempt_at);
-
-CREATE INDEX crawl_jobs_recent_failure_idx
-    ON crawl_jobs (failed_at DESC, url)
-    WHERE failed_at IS NOT NULL;
+CREATE TABLE origin_cooldowns (
+    origin text PRIMARY KEY,
+    until_at timestamptz NOT NULL
+);
 
 -- canonical extracted pages divided into derived retrieval chunks
 CREATE TABLE pages (
@@ -62,8 +51,12 @@ CREATE TABLE pages (
     content text NOT NULL,
     published_at timestamptz,
     language text,
-    fetched_at timestamptz NOT NULL
+    fetched_at timestamptz NOT NULL,
+    indexed_at timestamptz,
+    index_error text
 );
+
+CREATE INDEX pages_pending_index_idx ON pages (id) WHERE indexed_at IS NULL;
 
 CREATE INDEX pages_site_idx ON pages (site_id);
 

@@ -13,12 +13,15 @@ class IndexStats:
     queued_count: int
     retrying_count: int
     failed_count: int
+    rejected_count: int = 0
+    pending_index_count: int = 0
+    failed_index_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
-class FailedCrawlJob:
+class FailedArticle:
     url: str
-    attempt_count: int
+    failed_batches: int
     last_error: str
 
 
@@ -26,32 +29,15 @@ async def fetch_index_stats(conn: psycopg.AsyncConnection) -> IndexStats:
     cur = await conn.execute(
         """
         SELECT (SELECT count(*) FROM sites),
-               estimates.page_count,
-               estimates.chunk_count,
-               jobs.queued_count,
-               jobs.retrying_count,
-               jobs.failed_count
-        FROM (
-            SELECT COALESCE(
-                       max(n_live_tup) FILTER (WHERE relname = 'pages'), 0
-                   ) AS page_count,
-                   COALESCE(
-                       max(n_live_tup) FILTER (WHERE relname = 'chunks'), 0
-                   ) AS chunk_count
-            FROM pg_stat_user_tables
-            WHERE schemaname = current_schema()
-              AND relname IN ('pages', 'chunks')
-        ) AS estimates
-        CROSS JOIN (
-            SELECT count(*) FILTER (WHERE failed_at IS NULL) AS queued_count,
-                   count(*) FILTER (
-                       WHERE failed_at IS NULL AND attempt_count > 0
-                   ) AS retrying_count,
-                   count(*) FILTER (
-                       WHERE failed_at IS NOT NULL
-                   ) AS failed_count
-            FROM crawl_jobs
-        ) AS jobs
+               (SELECT count(*) FROM pages),
+               COALESCE((SELECT n_live_tup FROM pg_stat_user_tables WHERE relname = 'chunks' AND schemaname = current_schema()), 0),
+               count(*) FILTER (WHERE status = 'pending'),
+               count(*) FILTER (WHERE status = 'pending' AND failed_batches > 0),
+               count(*) FILTER (WHERE status = 'failed'),
+               count(*) FILTER (WHERE status = 'rejected'),
+               (SELECT count(*) FROM pages WHERE indexed_at IS NULL),
+               (SELECT count(*) FROM pages WHERE indexed_at IS NULL AND index_error IS NOT NULL)
+        FROM article_urls
         """
     )
     return _index_stats_from_row(await cur.fetchone())
@@ -61,28 +47,28 @@ def _index_stats_from_row(row: object) -> IndexStats:
     if (
         not isinstance(row, Sequence)
         or isinstance(row, (str, bytes))
-        or len(row) != 6
+        or len(row) != 9
         or any(
             not isinstance(value, int) or isinstance(value, bool) or value < 0
             for value in row
         )
     ):
         raise ValueError("invalid index stats database row")
-    values = cast(tuple[int, int, int, int, int, int], tuple(row))
+    values = cast(tuple[int, int, int, int, int, int, int, int, int], tuple(row))
     return IndexStats(*values)
 
 
-async def list_failed_jobs(
+async def list_failed_articles(
     conn: psycopg.AsyncConnection, *, limit: int = 10
-) -> list[FailedCrawlJob]:
+) -> list[FailedArticle]:
     cur = await conn.execute(
         """
-        SELECT url, attempt_count, last_error
-        FROM crawl_jobs
-        WHERE failed_at IS NOT NULL
-        ORDER BY failed_at DESC
+        SELECT url, failed_batches, last_error
+        FROM article_urls
+        WHERE status = 'failed'
+        ORDER BY updated_at DESC
         LIMIT %s
         """,
         (limit,),
     )
-    return [FailedCrawlJob(row[0], row[1], row[2]) for row in await cur.fetchall()]
+    return [FailedArticle(row[0], row[1], row[2]) for row in await cur.fetchall()]

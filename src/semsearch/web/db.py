@@ -38,7 +38,7 @@ class RecentActivity:
     url: str
     status: Literal["success", "failure"]
     occurred_at: datetime
-    attempt_count: int | None
+    failed_batches: int | None
     detail: str | None
 
 
@@ -99,7 +99,7 @@ def _bm25_candidate_from_row(row: tuple[object, ...]) -> Bm25CandidateRecord:
 def _recent_activity_from_row(row: tuple[object, ...]) -> RecentActivity:
     if len(row) != 5:
         raise ValueError("invalid recent activity database row")
-    url, status, occurred_at, attempt_count, detail = row
+    url, status, occurred_at, failed_batches, detail = row
     if not isinstance(url, str):
         raise ValueError("invalid recent activity database row")  # noqa: TRY004
     checked_status: Literal["success", "failure"]
@@ -111,11 +111,11 @@ def _recent_activity_from_row(row: tuple[object, ...]) -> RecentActivity:
         raise ValueError("invalid recent activity database row")
     if not isinstance(occurred_at, datetime):
         raise ValueError("invalid recent activity database row")  # noqa: TRY004
-    if attempt_count is not None and not isinstance(attempt_count, int):
+    if failed_batches is not None and not isinstance(failed_batches, int):
         raise ValueError("invalid recent activity database row")
     if detail is not None and not isinstance(detail, str):
         raise ValueError("invalid recent activity database row")
-    return RecentActivity(url, checked_status, occurred_at, attempt_count, detail)
+    return RecentActivity(url, checked_status, occurred_at, failed_batches, detail)
 
 
 async def ping(conn: psycopg.AsyncConnection) -> None:
@@ -127,7 +127,7 @@ async def list_available_languages(conn: psycopg.AsyncConnection) -> list[str]:
         """
         SELECT DISTINCT language
         FROM pages
-        WHERE language IS NOT NULL
+        WHERE language IS NOT NULL AND indexed_at IS NOT NULL
         ORDER BY language
         """
     )
@@ -168,16 +168,16 @@ async def list_recent_activity(
 ) -> list[RecentActivity]:
     cur = await conn.execute(
         """
-        SELECT url, status, occurred_at, attempt_count, detail
+        SELECT url, status, occurred_at, failed_batches, detail
         FROM (
             SELECT url, 'success' AS status, fetched_at AS occurred_at,
-                   NULL::int AS attempt_count, NULL::text AS detail
+                   NULL::int AS failed_batches, NULL::text AS detail
             FROM pages
             UNION ALL
-            SELECT url, 'failure' AS status, failed_at AS occurred_at,
-                   attempt_count, last_error AS detail
-            FROM crawl_jobs
-            WHERE failed_at IS NOT NULL
+            SELECT url, 'failure' AS status, updated_at AS occurred_at,
+                   failed_batches, last_error AS detail
+            FROM article_urls
+            WHERE status IN ('failed', 'rejected')
         ) AS activity
         ORDER BY occurred_at DESC, url
         LIMIT %s
@@ -201,7 +201,7 @@ async def fetch_dense_candidate_rows(
         SELECT c.id, c.page_id, 1 - (c.embedding <=> %s) AS similarity
         FROM chunks c
         JOIN pages p ON p.id = c.page_id
-        WHERE {predicate}
+        WHERE p.indexed_at IS NOT NULL AND {predicate}
         ORDER BY c.embedding <=> %s
         LIMIT %s
         """
@@ -232,7 +232,7 @@ async def fetch_bm25_candidate_rows(
         FROM chunks c
         JOIN pages p ON p.id = c.page_id
         CROSS JOIN search_query
-        WHERE {predicate}
+        WHERE p.indexed_at IS NOT NULL AND {predicate}
         ORDER BY c.search_vector <&> search_query.value
         LIMIT %s
         """

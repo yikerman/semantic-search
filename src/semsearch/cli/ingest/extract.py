@@ -27,7 +27,7 @@ class ExtractedPage:
     language: str
 
 
-def extract_page(html: str, url: str) -> ExtractedPage | None:
+def extract_page(html: bytes | str, url: str) -> ExtractedPage | None:
     doc = trafilatura.bare_extraction(html, url=url, with_metadata=True)
     if not isinstance(doc, Document):
         return None

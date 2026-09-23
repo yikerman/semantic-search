@@ -1,3 +1,20 @@
-Consider these one-off scripts less-reviewed and tested.
+# Site imports
 
-`remove_robots_disallowed_sites.py` is destructive by default. It removes sites whose current `robots.txt` fully disallows the configured crawler, including all owned pages, chunks, and crawl jobs. Stop the daemon and use `--dry-run` to preview the candidates.
+Use the running daemon container for imports (substitute `docker` for `podman`
+when using Docker Compose):
+
+```sh
+podman compose exec daemon /app/.venv/bin/python scripts/import_indieblog_feeds.py
+podman compose exec daemon /app/.venv/bin/python scripts/import_chinese_independent_blogs.py
+```
+
+The first imports indieblog.page's JSON export; the second imports the
+chinese-independent-blogs CSV. Both accept `--dry-run`, `--limit`,
+`--concurrency`, and `--refresh-existing`.
+
+Imports fetch the source list and register configuration only. Websites are not
+contacted or DNS-checked during registration; the Scrapy downloader enforces
+public destinations, robots rules and source discovery during `semsearch crawl`.
+
+The previous robots-based site removal script has been removed. The crawler now
+honors robots rules for individual requests and records rejected article URLs.

@@ -1,29 +1,24 @@
-from dataclasses import dataclass
 from datetime import datetime
-from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict
 
 
-@dataclass(frozen=True, slots=True)
-class Site:
+class Site(BaseModel):
+    model_config = ConfigDict(frozen=True, strict=True)
+
     id: int
     base_url: str
-    sitemap_url: str | None
+    start_url: str
+    sitemap_url: str
     feed_url: str
-    last_polled_at: datetime | None
-    next_poll_at: datetime | None
-    feed_etag: str | None
-    feed_last_modified: str | None
-    poll_failures: int
-    sync_error: str | None
-    history_pending: bool
-    history_error: str | None
+    history_complete: bool = False
+    last_crawled_at: datetime | None = None
+    last_error: str | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class CrawlAttempt:
+class IndexPage(BaseModel):
+    model_config = ConfigDict(frozen=True, strict=True)
+
     id: int
-    site_id: int
-    url: str
-    source: str
-    attempt_count: int
-    lease_token: UUID
+    title: str | None
+    content: str

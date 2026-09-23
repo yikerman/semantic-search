@@ -49,31 +49,17 @@ def test_schema_keeps_canonical_page_content_and_derived_chunk_spans():
     assert "USING bm25 (search_vector bm25_ops)" in schema
 
 
-def test_schema_adds_durable_crawl_and_poll_state():
+def test_schema_separates_discovery_storage_and_indexing():
     schema = load_schema_sql(Settings(embedding_model="test-model", embedding_dim=2))
-
-    assert "CREATE TABLE crawl_jobs" in schema
+    assert "CREATE TABLE article_urls" in schema
     assert "url text UNIQUE NOT NULL" in schema
-    assert "next_poll_at timestamptz" in schema
-    assert "history_pending boolean NOT NULL DEFAULT false" in schema
-    assert "feed_url text NOT NULL" in schema
-    assert "site_id bigint NOT NULL REFERENCES sites" in schema
-    assert "poll_lease_token uuid" in schema
-    assert "lease_token uuid" in schema
-    assert "failed_at timestamptz" in schema
-    assert "WHERE next_attempt_at IS NOT NULL" in schema
+    assert "ON DELETE CASCADE" in schema
+    assert "history_complete boolean" in schema
+    assert "indexed_at timestamptz" in schema
+    assert "index_error text" in schema
+    assert "lease" not in schema
+    assert "crawl_jobs" not in schema
     assert "ALTER TABLE" not in schema
-    assert "last_indexed_at" not in schema
-
-
-def test_schema_indexes_recent_activity():
-    schema = load_schema_sql(Settings(embedding_model="test-model", embedding_dim=2))
-
-    assert "pages_recent_idx" in schema
-    assert "ON pages (fetched_at DESC, url)" in schema
-    assert "crawl_jobs_recent_failure_idx" in schema
-    assert "ON crawl_jobs (failed_at DESC, url)" in schema
-    assert "WHERE failed_at IS NOT NULL" in schema
 
 
 def test_schema_adds_page_language_metadata():
@@ -281,11 +267,11 @@ async def test_recent_activity_combines_successes_and_failures():
 
     assert conn.query is not None
     assert "FROM pages" in conn.query
-    assert "FROM crawl_jobs" in conn.query
+    assert "FROM article_urls" in conn.query
     assert "ORDER BY occurred_at DESC, url" in conn.query
     assert conn.params == (10,)
     assert [item.status for item in activity] == ["success", "failure"]
-    assert activity[1].attempt_count == 3
+    assert activity[1].failed_batches == 3
     assert activity[1].detail == "GET returned 404"
 
 

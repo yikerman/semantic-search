@@ -13,24 +13,27 @@
     </tr>
     <tr>
       <th scope="row">pages</th>
-      <td>~{{ stats.page_count }}</td>
+      <td>{{ stats.page_count }}</td>
     </tr>
     <tr>
       <th scope="row">chunks</th>
       <td>~{{ stats.chunk_count }}</td>
     </tr>
     <tr>
-      <th scope="row">queued</th>
+      <th scope="row">pending URLs</th>
       <td>{{ stats.queued_count }}</td>
     </tr>
     <tr>
-      <th scope="row">retrying</th>
+      <th scope="row">retrying URLs</th>
       <td>{{ stats.retrying_count }}</td>
     </tr>
     <tr>
-      <th scope="row">failed</th>
+      <th scope="row">failed URLs</th>
       <td>{{ stats.failed_count }}</td>
     </tr>
+    <tr><th scope="row">rejected URLs</th><td>{{ stats.rejected_count }}</td></tr>
+    <tr><th scope="row">pending indexing</th><td>{{ stats.pending_index_count }}</td></tr>
+    <tr><th scope="row">failed indexing</th><td>{{ stats.failed_index_count }}</td></tr>
   </tbody>
 </table>
 
@@ -48,7 +51,7 @@
         </header>
         <p class="activity-url"><a href="{{ item.url }}">{{ item.url }}</a></p>
         {% if item.detail %}
-        <p class="activity-detail">{{ item.attempt_count }} attempts &middot; {{ item.detail }}</p>
+        <p class="activity-detail">{% if item.failed_batches %}{{ item.failed_batches }} failed batches &middot; {% endif %}{{ item.detail }}</p>
         {% endif %}
       </article>
     </li>

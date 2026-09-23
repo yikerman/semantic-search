@@ -30,7 +30,7 @@ def test_cli_is_admin_only():
     assert "site" in result.stdout
 
 
-def test_removed_commands_are_not_exposed_and_daemon_is_canonical():
+def test_daemon_and_manual_batch_commands():
     runner = CliRunner()
 
     site_help = runner.invoke(cli_module.app, ["site", "--help"])
@@ -41,6 +41,8 @@ def test_removed_commands_are_not_exposed_and_daemon_is_canonical():
     assert "index" not in site_help.stdout
     assert poll_help.exit_code != 0
     assert "daemon" in root_help.stdout
+    assert "crawl" in root_help.stdout
+    assert "index" in root_help.stdout
     assert "worker" not in root_help.stdout
 
 
@@ -225,16 +227,16 @@ async def test_status_page_shows_recent_activity(monkeypatch):
     assert ">Status</a>" in response.text
     assert "<caption>Index totals</caption>" in response.text
     assert '<th scope="row">pages</th>' in response.text
-    assert "<td>~100</td>" in response.text
+    assert "<td>100</td>" in response.text
     assert "<td>~400</td>" in response.text
-    assert '<th scope="row">retrying</th>' in response.text
+    assert '<th scope="row">retrying URLs</th>' in response.text
     assert "<td>3</td>" in response.text
     assert "Recent activity" in response.text
     assert "Recent failures" not in response.text
     assert '<strong class="activity-status">success</strong>' in response.text
     assert '<strong class="activity-status">failure</strong>' in response.text
     assert "https://example.com/new" in response.text
-    assert "3 attempts &middot; GET returned 404" in response.text
+    assert "3 failed batches &middot; GET returned 404" in response.text
     assert 'datetime="2026-07-13T10:00:00+00:00"' in response.text
     assert "test-model (8 dims)" in response.text
     assert '<footer class="status-footer">' in response.text

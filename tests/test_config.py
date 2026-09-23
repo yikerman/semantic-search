@@ -13,15 +13,16 @@ from semsearch.share.config import Settings
         ("embedding_batch_size", 0),
         ("chunk_tokens", 0),
         ("chunk_token_overlap", -1),
-        ("fetch_delay_seconds", -1),
-        ("fetch_timeout_seconds", 0),
-        ("fetch_concurrency", 0),
+        ("crawl_delay_seconds", -1),
+        ("crawl_timeout_seconds", 0),
+        ("crawl_concurrency", 0),
         ("database_pool_max_size", 0),
         ("database_pool_max_size", 1),
-        ("site_poll_interval_seconds", 0),
-        ("site_poll_concurrency", 0),
-        ("ingest_concurrency", 0),
-        ("history_post_limit", 0),
+        ("crawl_interval_seconds", 0),
+        ("extraction_workers", 0),
+        ("index_concurrency", 0),
+        ("index_interval_seconds", 0),
+        ("crawl_article_limit", 0),
     ],
 )
 def test_settings_reject_invalid_numeric_values(field: str, value: object):
@@ -51,8 +52,8 @@ def test_default_site_poll_interval_is_twelve_hours(tmp_path, monkeypatch):
     # Keep hermetic: chdir away from the repo so a developer's .env is not read,
     # and clear any exported override of the value under test.
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("SITE_POLL_INTERVAL_SECONDS", raising=False)
-    assert Settings().site_poll_interval_seconds == 43_200
+    monkeypatch.delenv("CRAWL_INTERVAL_SECONDS", raising=False)
+    assert Settings().crawl_interval_seconds == 43_200
 
 
 @pytest.mark.parametrize("level", ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])

@@ -37,10 +37,12 @@ services:
 
   daemon:
     restart: unless-stopped
+    stop_grace_period: 90s
     build:
       context: .
       dockerfile: Containerfile
-    command: ["/app/.venv/bin/semsearch", "daemon"]
+    entrypoint: ["/app/.venv/bin/semsearch"]
+    command: ["daemon"]
     env_file: .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-semsearch}:${POSTGRES_PASSWORD:-semsearch}@db:5432/${POSTGRES_DB:-semsearch}

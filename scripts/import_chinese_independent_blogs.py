@@ -5,14 +5,11 @@ import csv
 import io
 import itertools
 import logging
-import socket
 from dataclasses import dataclass
-from ipaddress import ip_address
-from urllib.parse import urlsplit
 
+import httpx
 from psycopg_pool import AsyncConnectionPool
 
-from semsearch.cli.ingest.fetch import Fetcher, create_fetcher
 from semsearch.cli.sites import add_site, list_sites
 from semsearch.cli.url import normalize_origin, try_normalize_url
 from semsearch.share.config import Settings, get_settings
@@ -45,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--refresh-existing",
         action="store_true",
-        help="Validate and update sites that are already configured.",
+        help="Update configuration for sites that are already configured.",
     )
     parser.add_argument(
         "--dry-run",
@@ -59,7 +56,7 @@ async def main() -> int:
     args = parse_args()
     settings = get_settings()
     configure_logging(settings.log_level)
-    async with create_fetcher(settings) as fetcher:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as fetcher:
         rows = await fetch_rows(fetcher, args.source_url)
         feeds, duplicate_count = select_feeds(rows)
         if args.limit is not None:
@@ -75,17 +72,19 @@ async def main() -> int:
             return 0
         return await import_feeds(
             settings,
-            fetcher,
             feeds,
             concurrency=args.concurrency,
             refresh_existing=args.refresh_existing,
         )
 
 
-async def fetch_rows(fetcher: Fetcher, url: str) -> list[dict[str, str | None]]:
-    response = await fetcher.fetch_response(url)
+async def fetch_rows(
+    fetcher: httpx.AsyncClient, url: str
+) -> list[dict[str, str | None]]:
+    response = await fetcher.get(url)
+    response.raise_for_status()
     try:
-        text = response.body.decode("utf-8-sig")
+        text = response.content.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise ValueError(f"CSV is not valid UTF-8: {exc}") from exc
 
@@ -137,7 +136,6 @@ def parse_feed(row: dict[str, str | None], *, line_number: int) -> BlogFeed | No
 
 async def import_feeds(
     settings: Settings,
-    fetcher: Fetcher,
     feeds: list[BlogFeed],
     *,
     concurrency: int,
@@ -154,7 +152,7 @@ async def import_feeds(
         progress = itertools.count(1)
 
         async def import_one(feed: BlogFeed) -> bool:
-            imported = await _import_feed(settings, fetcher, pool, feed)
+            imported = await _import_feed(pool, feed)
             done = next(progress)
             if done % 100 == 0:
                 logger.info("Processed %d/%d sites", done, len(pending))
@@ -174,49 +172,20 @@ async def import_feeds(
 
 
 async def _import_feed(
-    settings: Settings,
-    fetcher: Fetcher,
     pool: AsyncConnectionPool,
     feed: BlogFeed,
 ) -> bool:
-    for url in (feed.feed_url, feed.homepage):
-        if not await _resolves_public(url):
-            logger.error("Skipping %s: non-public or unresolvable %s", feed.origin, url)
-            return False
     try:
         await add_site(
             pool,
-            fetcher,
             feed.homepage,
             "auto",
             feed.feed_url,
-            poll_interval_seconds=settings.site_poll_interval_seconds,
         )
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed %s (%s): %s", feed.origin, feed.feed_url, exc)
         return False
     return True
-
-
-async def _resolves_public(url: str) -> bool:
-    host = urlsplit(url).hostname
-    if host is None:
-        return False
-    loop = asyncio.get_running_loop()
-    try:
-        infos = await loop.getaddrinfo(host, None, type=socket.SOCK_STREAM)
-    except socket.gaierror:
-        return False
-    resolved = False
-    for info in infos:
-        try:
-            address = ip_address(info[4][0])
-        except ValueError:
-            return False
-        if not address.is_global:
-            return False
-        resolved = True
-    return resolved
 
 
 def _http_url(value: object) -> str | None:

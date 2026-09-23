@@ -23,28 +23,26 @@ src/semsearch/
 
 ## Development
 
-Running db in container and python apps on host would be easier:
+Run the app with Compose (see below). For local checks:
 
 ```sh
 uv sync
-docker compose up -d db
-cp .env.example .env  # set EMBEDDING_API_KEY before indexing
-uv run semsearch init-db
-# manually add a site. note that feed is mandatory
-uv run semsearch site add https://some.blog/ --sitemap auto --feed auto
-uv run semsearch site remove https://some.blog/
-uv run semsearch daemon &  # long-running polling and ingestion process
-uv run uvicorn semsearch.web.app:app --reload
+uv run pyright
+uv run pytest
+uv run ruff check
+uv run ty check
 ```
-
-Check with `pyright`, `pytest`, `ruff` and `ty`.
 
 ## Deployment
 
+Use Docker Compose or `podman compose`. Version 1.0 needs a fresh database.
+
 ```sh
 cp .env.example .env  # See .env.example for config keys
-docker compose up -d --build
-docker compose exec app /app/.venv/bin/semsearch init-db  # first run only
+docker compose build
+docker compose up -d db
+docker compose run --rm daemon init-db  # first run only
+docker compose up -d
 ```
 
 For an embedding server on the host, use
@@ -53,9 +51,11 @@ For an embedding server on the host, use
 Run admin commands inside the container:
 
 ```sh
-docker compose exec app /app/.venv/bin/semsearch status
+docker compose run --rm daemon status
+# manually add a site
+docker compose run --rm daemon site add https://some.blog/ --sitemap auto --feed auto
 # if you decide to use it
-docker compose exec app /app/.venv/bin/python scripts/import_indieblog_feeds.py --dry-run
+docker compose exec daemon /app/.venv/bin/python scripts/import_indieblog_feeds.py --dry-run
 ```
 
 Changing the chunking algorithm, embedding dimension, or model requires re-indexing. TODO

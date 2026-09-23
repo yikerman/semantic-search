@@ -1,200 +1,97 @@
 import asyncio
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
-from semsearch.cli.daemon.run import (
-    DAEMON_LOCK_ID,
-    DaemonAlreadyRunningError,
-    advisory_lock,
-    run_daemon,
-)
+from semsearch.cli import daemon
+from semsearch.cli.locks import AlreadyRunningError
+from semsearch.share.config import Settings
 
 
-class FakeConnection(AbstractAsyncContextManager):
-    async def __aenter__(self):
-        return self
+async def test_repeat_waits_after_success_and_lock_contention(monkeypatch):
+    calls = 0
+    waits = []
 
-    async def __aexit__(self, *exc_info):
-        return None
+    async def operation():
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise AlreadyRunningError
+        if calls == 3:
+            raise RuntimeError("job failed")
 
-    def transaction(self):
-        return self
+    async def sleep(interval):
+        waits.append(interval)
 
-
-class FakePool:
-    def connection(self):
-        return FakeConnection()
-
-
-class FakeFetcher:
-    async def fetch_response(self, url: str):
-        raise AssertionError("unexpected fetch")
-
-
-class LockCursor:
-    def __init__(self, acquired: bool) -> None:
-        self._acquired = acquired
-
-    async def fetchone(self):
-        return (self._acquired,)
+    monkeypatch.setattr(daemon.asyncio, "sleep", sleep)
+    with pytest.raises(RuntimeError, match="job failed"):
+        await daemon.repeat("test", operation, 17)
+    assert calls == 3
+    assert waits == [17, 17]
 
 
-class LockConnection(AbstractAsyncContextManager):
-    def __init__(
-        self, *, acquired: bool = True, unlock_error: Exception | None = None
-    ) -> None:
-        self.acquired = acquired
-        self.unlock_error = unlock_error
-        self.statements: list[str] = []
-        self.commits = 0
+async def test_jobs_run_independently_and_cancel_cleanly(monkeypatch):
+    crawling = asyncio.Event()
+    indexed_twice = asyncio.Event()
+    cleaned = set()
+    index_calls = 0
 
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc_info):
-        return None
-
-    async def execute(self, query, params=()):
-        self.statements.append(query)
-        if "pg_advisory_unlock" in query and self.unlock_error is not None:
-            raise self.unlock_error
-        return LockCursor(self.acquired)
-
-    async def commit(self):
-        self.commits += 1
-
-
-class LockPool:
-    def __init__(self, conn: LockConnection) -> None:
-        self._conn = conn
-
-    def connection(self):
-        return self._conn
-
-
-async def test_advisory_lock_acquires_then_releases():
-    conn = LockConnection()
-
-    async with advisory_lock(cast(Any, LockPool(conn)), 42):
-        assert any("pg_try_advisory_lock" in s for s in conn.statements)
-        assert not any("pg_advisory_unlock" in s for s in conn.statements)
-
-    assert any("pg_advisory_unlock" in s for s in conn.statements)
-    assert conn.commits == 2
-
-
-async def test_advisory_lock_raises_when_already_held():
-    conn = LockConnection(acquired=False)
-
-    with pytest.raises(DaemonAlreadyRunningError):
-        async with advisory_lock(cast(Any, LockPool(conn)), 42):
-            raise AssertionError("body must not run")
-
-    assert not any("pg_advisory_unlock" in s for s in conn.statements)
-
-
-async def test_advisory_lock_releases_when_body_raises():
-    conn = LockConnection()
-
-    with pytest.raises(ValueError, match="boom"):
-        async with advisory_lock(cast(Any, LockPool(conn)), 42):
-            raise ValueError("boom")
-
-    assert any("pg_advisory_unlock" in s for s in conn.statements)
-
-
-async def test_advisory_lock_swallows_unlock_failure():
-    conn = LockConnection(unlock_error=RuntimeError("connection lost"))
-
-    async with advisory_lock(cast(Any, LockPool(conn)), 42):
-        pass
-
-
-def daemon_settings() -> Any:
-    return cast(
-        Any,
-        SimpleNamespace(
-            site_poll_interval_seconds=3600,
-            site_poll_concurrency=1,
-            ingest_concurrency=1,
-        ),
-    )
-
-
-async def test_run_daemon_holds_lock_around_supervision(monkeypatch):
-    events: list[tuple[str, int]] = []
-    loops_started = asyncio.Event()
-
-    @asynccontextmanager
-    async def lock(pool, lock_id):
-        events.append(("acquired", lock_id))
+    async def crawl(*args):
+        crawling.set()
         try:
-            yield
+            await asyncio.Event().wait()
         finally:
-            events.append(("released", lock_id))
+            cleaned.add("crawl")
 
-    async def scatter(conn, *, interval_seconds):
-        events.append(("scattered", interval_seconds))
+    async def index(*args):
+        nonlocal index_calls
+        await crawling.wait()
+        index_calls += 1
+        if index_calls == 2:
+            indexed_twice.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleaned.add("index")
 
-    async def claim_due_site(conn):
-        loops_started.set()
+    async def sleep(interval):
+        assert interval == 13
 
-    async def process_next():
-        return None
-
-    monkeypatch.setattr("semsearch.cli.daemon.schedule.scatter_poll_schedule", scatter)
-    monkeypatch.setattr("semsearch.cli.daemon.schedule.claim_due_site", claim_due_site)
-    monkeypatch.setattr(
-        "semsearch.cli.daemon.run.create_crawl_job_processor",
-        lambda **kwargs: process_next,
-    )
-
+    monkeypatch.setattr(daemon, "run_crawl", crawl)
+    monkeypatch.setattr(daemon, "run_index", index)
+    monkeypatch.setattr(daemon.asyncio, "sleep", sleep)
     task = asyncio.create_task(
-        run_daemon(
-            cast(Any, FakePool()),
-            cast(Any, None),
-            cast(Any, FakeFetcher()),
-            cast(Any, None),
-            daemon_settings(),
-            lock=lock,
-        )
+        daemon.run_daemon(cast(Any, object()), Settings(index_interval_seconds=13))
     )
-    await loops_started.wait()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-    assert events == [
-        ("acquired", DAEMON_LOCK_ID),
-        ("scattered", 3600),
-        ("released", DAEMON_LOCK_ID),
-    ]
+    try:
+        await asyncio.wait_for(indexed_twice.wait(), timeout=1)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert cleaned == {"crawl", "index"}
 
 
-async def test_run_daemon_starts_nothing_when_lock_is_unavailable(monkeypatch):
-    scattered: list[int] = []
+async def test_unexpected_job_failure_stops_sibling(monkeypatch):
+    crawling = asyncio.Event()
+    stopped = asyncio.Event()
 
-    @asynccontextmanager
-    async def lock(pool, lock_id):
-        raise DaemonAlreadyRunningError("another semsearch daemon is already running")
-        yield
+    async def crawl(*args):
+        crawling.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
 
-    async def scatter(conn, *, interval_seconds):
-        scattered.append(interval_seconds)
+    async def index(*args):
+        await crawling.wait()
+        raise RuntimeError("database lost")
 
-    monkeypatch.setattr("semsearch.cli.daemon.schedule.scatter_poll_schedule", scatter)
-
-    with pytest.raises(DaemonAlreadyRunningError):
-        await run_daemon(
-            cast(Any, FakePool()),
-            cast(Any, None),
-            cast(Any, FakeFetcher()),
-            cast(Any, None),
-            daemon_settings(),
-            lock=lock,
+    monkeypatch.setattr(daemon, "run_crawl", crawl)
+    monkeypatch.setattr(daemon, "run_index", index)
+    with pytest.raises(ExceptionGroup) as caught:
+        await asyncio.wait_for(
+            daemon.run_daemon(cast(Any, object()), Settings()), timeout=1
         )
-
-    assert scattered == []
+    assert isinstance(caught.value.exceptions[0], RuntimeError)
+    assert stopped.is_set()

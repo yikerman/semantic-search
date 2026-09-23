@@ -10,9 +10,10 @@ Code is organized by ownership under three packages:
 - `semsearch.share`: settings, database pool setup, embeddings, schema, and
   utilities used by both surfaces
 - `semsearch.cli`: Typer commands, CLI database operations, site lifecycle,
-  crawling, and ingestion; `semsearch.cli.daemon` is the producer/consumer
-  package (`schedule` → `producer` → `queue` → `consumer` → pages), and
-  `semsearch.cli.ingest` holds the pure pipeline stages
+  crawling, and indexing; `semsearch.cli.crawl` owns Scrapy batches,
+  `semsearch.cli.index` indexes canonical pages, `semsearch.cli.daemon` schedules
+  recurring jobs, and `semsearch.cli.ingest`
+  holds parsing, extraction and chunking functions
 - `semsearch.web`: FastAPI app, web database reads, search pipeline, and
   templates
 
@@ -56,26 +57,32 @@ reranker runs are inputs to the final RRF fusion.
 
 ## Ingest
 
-The `semsearch.cli.ingest` pipeline is:
+`semsearch crawl` runs a finite Scrapy batch. It discovers current RSS/Atom and
+sitemap entries plus initial RFC 5005/WordPress history. Every eligible article URL
+is committed to `article_urls` before scheduling; limits constrain downloads, not
+persistence of discoveries. URL is append-only page identity. Robots rules are
+enforced. Scrapy owns request concurrency, domain pacing, retries and redirects.
+A public-only connection resolver and scoped redirect policy bound destinations.
 
-1. fetch HTML with `curl-cffi`
-2. extract main text with `trafilatura`
-3. split into token windows with the configured embedding tokenizer
-4. embed document chunks
-5. store pages and chunks
+Article responses must be HTML/XHTML, not feeds, sitemap XML or JSON. Trafilatura
+and language detection run in a bounded Pebble process pool with killable tasks.
+Canonical page insertion and URL completion are atomic. Source/body/text limits
+produce recorded outcomes. Origin cooldowns survive batch restarts.
 
-URL is page identity. Existing URLs are append-only and skipped.
-`robots.txt` is used for sitemap discovery; `Disallow` is not enforced yet.
+`semsearch index` takes a snapshot of unindexed canonical pages, chunks text with
+the pinned tokenizer, embeds chunks, and atomically stores chunks plus `indexed_at`.
+Embedding failure never requires another crawl. Search sees only indexed pages.
 
-Configured sites use normalized origins as human-readable ids and surrogate
-`sites.id` values for foreign keys. Sitemap is optional; feed-only sites are
-indexed by the continuous `daemon`, which scatters polling and discovers
-current and historical URLs into a durable queue, and ingests queued pages with
-bounded concurrency and retry backoff; concurrent ingest loops prefer sites no
-other loop is working so fetches spread across origins. When a feed shows only
-unseen URLs, historical discovery follows RFC 5005 links, then WordPress feed
-pagination, then the configured sitemap, stopping after `HISTORY_POST_LIMIT`
-URLs.
+One crawl and one index command may run concurrently; advisory locks prevent
+same-command overlap and cancel work if their connection is lost. There are no
+per-request leases, custom request scheduler or persistent Scrapy job directory.
+The container daemon runs crawl and index jobs independently, immediately at startup
+and periodically after each batch. It also owns future recurring maintenance such
+as tree balancing if the index migrates to `vchordrq`; that job is not implemented.
+Unexpected job failures stop sibling jobs and let the container restart the daemon.
+Podman/Docker Compose is the only supported deployment path. Site registration
+is configuration-only, and both feed-only and sitemap-only sites are supported.
+Version 1.0 requires a fresh database; do not add legacy migrations or adapters.
 
 ## Constraints
 
@@ -92,15 +99,15 @@ URLs.
 
 ## Dev Loop
 
-Start only the database with Compose; run the daemon and web app on the host.
+Run the application with Podman/Docker Compose; run hermetic checks on the host.
 
 ```sh
-podman compose up -d db
 cp .env.example .env
-uv run semsearch init-db
-uv run semsearch site add https://some.blog/ --sitemap auto --feed auto
-uv run semsearch daemon
-uv run uvicorn semsearch.web.app:app --reload
+podman compose build
+podman compose up -d db
+podman compose run --rm daemon init-db
+podman compose run --rm daemon site add https://some.blog/ --sitemap auto --feed auto
+podman compose up -d
 uv run pytest
 uv run ruff format
 uv run ruff check

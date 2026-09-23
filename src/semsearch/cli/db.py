@@ -2,13 +2,11 @@ import importlib.resources
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, LiteralString, cast
+from typing import LiteralString, cast
 
 import psycopg
 from pgvector import HalfVector
-from psycopg.rows import dict_row
 
-from semsearch.cli.models import Site
 from semsearch.share.config import Settings
 
 
@@ -17,15 +15,6 @@ class ChunkInsert:
     start_offset: int
     content: str
     embedding: Sequence[float]
-
-
-# Rows are mapped to Site by column name; keep these names equal to Site's fields.
-SITE_COLUMNS: LiteralString = """
-sites.id, sites.base_url, sites.sitemap_url, sites.feed_url,
-sites.last_polled_at, sites.next_poll_at, sites.feed_etag,
-sites.feed_last_modified, sites.poll_failures, sites.sync_error,
-sites.history_pending, sites.history_error
-"""
 
 
 def load_schema_sql(settings: Settings) -> LiteralString:
@@ -39,71 +28,6 @@ async def init_schema(settings: Settings) -> None:
     async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
         await conn.execute(load_schema_sql(settings))
         await conn.commit()
-
-
-async def upsert_site_config(
-    conn: psycopg.AsyncConnection,
-    *,
-    base_url: str,
-    sitemap_url: str | None,
-    feed_url: str,
-    initial_poll_delay_seconds: int,
-) -> Site:
-    cur = conn.cursor(row_factory=dict_row)
-    await cur.execute(
-        f"""
-        INSERT INTO sites (base_url, sitemap_url, feed_url, next_poll_at)
-        VALUES (%s, %s, %s, now() + make_interval(secs => %s))
-        ON CONFLICT (base_url) DO UPDATE SET
-            sitemap_url = EXCLUDED.sitemap_url,
-            feed_url = EXCLUDED.feed_url,
-            feed_etag = CASE
-                WHEN sites.feed_url = EXCLUDED.feed_url THEN sites.feed_etag
-                ELSE NULL
-            END,
-            feed_last_modified = CASE
-                WHEN sites.feed_url = EXCLUDED.feed_url THEN sites.feed_last_modified
-                ELSE NULL
-            END,
-            next_poll_at = CASE
-                WHEN sites.feed_url = EXCLUDED.feed_url THEN sites.next_poll_at
-                ELSE EXCLUDED.next_poll_at
-            END,
-            history_pending = CASE
-                WHEN sites.feed_url = EXCLUDED.feed_url THEN sites.history_pending
-                ELSE false
-            END,
-            history_error = CASE
-                WHEN sites.feed_url = EXCLUDED.feed_url THEN sites.history_error
-                ELSE NULL
-            END,
-            poll_failures = CASE
-                WHEN sites.feed_url = EXCLUDED.feed_url THEN sites.poll_failures
-                ELSE 0
-            END,
-            sync_error = CASE
-                WHEN sites.feed_url = EXCLUDED.feed_url THEN sites.sync_error
-                ELSE NULL
-            END,
-            poll_lease_until = CASE
-                WHEN sites.feed_url = EXCLUDED.feed_url THEN sites.poll_lease_until
-                ELSE NULL
-            END,
-            poll_lease_token = CASE
-                WHEN sites.feed_url = EXCLUDED.feed_url THEN sites.poll_lease_token
-                ELSE NULL
-            END
-        RETURNING {SITE_COLUMNS}
-        """,
-        (base_url, sitemap_url, feed_url, initial_poll_delay_seconds),
-    )
-    return Site(**cast(dict[str, Any], await cur.fetchone()))
-
-
-async def list_site_configs(conn: psycopg.AsyncConnection) -> list[Site]:
-    cur = conn.cursor(row_factory=dict_row)
-    await cur.execute(f"SELECT {SITE_COLUMNS} FROM sites ORDER BY base_url")
-    return [Site(**row) for row in await cur.fetchall()]
 
 
 async def delete_site_configs(
