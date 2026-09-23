@@ -17,7 +17,7 @@ from semsearch.web.app import (
     prepare_language_options,
     templates,
 )
-from semsearch.web.db import RecentActivity
+from semsearch.web.db import IndexingIssue, RecentActivity
 from semsearch.web.search.models import PageCandidate
 
 
@@ -172,6 +172,17 @@ def test_prepare_display_extracts_bounded_page_lead():
 async def test_status_page_shows_recent_activity(monkeypatch):
     stats_calls = 0
     activity_calls = 0
+    issue_calls = 0
+
+    async def issues(conn):
+        nonlocal issue_calls
+        issue_calls += 1
+        return [
+            IndexingIssue(
+                "https://example.com/long", "document exceeds input budget", True
+            ),
+            IndexingIssue("https://example.com/retry", "provider <unavailable>", False),
+        ]
 
     async def stats(conn):
         nonlocal stats_calls
@@ -207,6 +218,7 @@ async def test_status_page_shows_recent_activity(monkeypatch):
 
     monkeypatch.setattr("semsearch.web.app.fetch_index_stats", stats)
     monkeypatch.setattr("semsearch.web.app.list_recent_activity", activity)
+    monkeypatch.setattr("semsearch.web.app.list_indexing_issues", issues)
     monkeypatch.setattr(
         "semsearch.web.app.get_settings",
         lambda: Settings(embedding_model="test-model", embedding_dim=8),
@@ -223,6 +235,7 @@ async def test_status_page_shows_recent_activity(monkeypatch):
     assert cached_response.status_code == 200
     assert stats_calls == 1
     assert activity_calls == 1
+    assert issue_calls == 1
     assert response.text.count('aria-current="page"') == 1
     assert ">Status</a>" in response.text
     assert "<caption>Index totals</caption>" in response.text
@@ -233,7 +246,13 @@ async def test_status_page_shows_recent_activity(monkeypatch):
     assert "rejected indexing" in response.text
     assert '<th scope="row">retrying URLs</th>' in response.text
     assert "<td>3</td>" in response.text
-    assert "Recent activity" in response.text
+    assert "Recent crawl activity" in response.text
+    assert "Indexing issues" in response.text
+    assert "indexing rejected" in response.text
+    assert "indexing failed — will retry" in response.text
+    assert "document exceeds input budget" in response.text
+    assert "https://example.com/long" in response.text
+    assert "provider &lt;unavailable&gt;" in response.text
     assert "Recent failures" not in response.text
     assert '<strong class="activity-status">success</strong>' in response.text
     assert '<strong class="activity-status">failure</strong>' in response.text

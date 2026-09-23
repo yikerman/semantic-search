@@ -10,6 +10,7 @@ from semsearch.share.config import Settings
     ("field", "value"),
     [
         ("embedding_dim", 0),
+        ("embedding_dim", 16001),
         ("embedding_max_tokens", 32),
         ("crawl_delay_seconds", -1),
         ("crawl_timeout_seconds", 0),
@@ -47,6 +48,11 @@ def test_default_site_poll_interval_is_twelve_hours(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("CRAWL_INTERVAL_SECONDS", raising=False)
     assert Settings().crawl_interval_seconds == 43_200
+
+
+def test_embedding_dimensions_are_not_limited_by_the_old_hnsw_index():
+    assert Settings(embedding_dim=4096).embedding_dim == 4096
+    assert Settings(embedding_dim=16000).embedding_dim == 16000
 
 
 @pytest.mark.parametrize("level", ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])

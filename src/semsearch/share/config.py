@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     embedding_api_base: str = "https://openrouter.ai/api/v1"
     embedding_api_key: str = ""
     embedding_model: str = "qwen/qwen3-embedding-4b"
-    embedding_dim: Annotated[int, Field(gt=0, le=4000)] = 2560
+    embedding_dim: Annotated[int, Field(gt=0, le=16000)] = 2560
     embedding_tokenizer: NonBlankString = "Qwen/Qwen3-Embedding-4B"
     embedding_tokenizer_revision: NonBlankString = (
         "5cf2132abc99cad020ac570b19d031efec650f2b"

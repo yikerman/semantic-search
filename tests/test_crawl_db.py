@@ -45,7 +45,7 @@ async def test_index_publication_updates_only_unindexed_pages():
     await db.publish_page_index(
         cast(Any, conn), page_id=3, text="Title\n\nWhole post", embedding=(1.0, 0.0)
     )
-    assert "UPDATE pages SET embedding = %s" in conn.query
+    assert "UPDATE pages SET embedding = quantize_to_rabitq8(%s::vector)" in conn.query
     assert "tokenize(%s, 'semsearch_llmlingua2')::bm25vector" in conn.query
     assert "indexed_at = now(), index_error = NULL" in conn.query
     assert "WHERE id = %s AND indexed_at IS NULL AND NOT index_rejected" in conn.query

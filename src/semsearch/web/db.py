@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Literal
 
 import psycopg
-from pgvector import HalfVector
+from pgvector import Vector
 from psycopg import sql
 
 from semsearch.web.search.filters import SqlPredicate
@@ -19,6 +19,39 @@ class RecentActivity:
     occurred_at: datetime
     failed_batches: int | None
     detail: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class IndexingIssue:
+    url: str
+    detail: str
+    rejected: bool
+
+
+async def list_indexing_issues(
+    conn: psycopg.AsyncConnection, *, limit: int = 10
+) -> list[IndexingIssue]:
+    cur = await conn.execute(
+        """
+        SELECT url, index_error, index_rejected
+        FROM pages
+        WHERE indexed_at IS NULL AND index_error IS NOT NULL
+        ORDER BY id DESC
+        LIMIT %s
+        """,
+        (limit,),
+    )
+    issues: list[IndexingIssue] = []
+    for row in await cur.fetchall():
+        if (
+            len(row) != 3
+            or not isinstance(row[0], str)
+            or not isinstance(row[1], str)
+            or type(row[2]) is not bool
+        ):
+            raise ValueError("invalid indexing issue database row")
+        issues.append(IndexingIssue(*row))
+    return issues
 
 
 def _scored_page_from_row(row: tuple[object, ...]) -> tuple[PageCandidate, float]:
@@ -129,15 +162,16 @@ async def fetch_dense_candidate_rows(
     predicate: SqlPredicate,
     limit: int,
 ) -> list[tuple[PageCandidate, float]]:
-    embedding = HalfVector(list(query_embedding))
+    embedding = Vector(list(query_embedding))
+    # VectorChord 1.1.1's rabitq8 <=> returns negative cosine, not 1 - cosine.
     cur = await conn.execute(
         sql.SQL(
             """
         SELECT p.id, p.url, p.title, p.content, p.published_at,
-               1 - (p.embedding <=> %s) AS similarity
+               -(p.embedding <=> quantize_to_rabitq8(%s::vector)) AS similarity
         FROM pages p
         WHERE p.indexed_at IS NOT NULL AND {predicate}
-        ORDER BY p.embedding <=> %s
+        ORDER BY p.embedding <=> quantize_to_rabitq8(%s::vector)
         LIMIT %s
         """
         ).format(predicate=predicate.clause),

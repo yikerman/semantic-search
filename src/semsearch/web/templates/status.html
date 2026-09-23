@@ -38,8 +38,26 @@
   </tbody>
 </table>
 
+{% if indexing_issues %}
+<section class="activity" aria-labelledby="indexing-issues-heading">
+  <h2 id="indexing-issues-heading">Indexing issues</h2>
+  <p>Up to 10 pages with unresolved indexing errors.</p>
+  <ul class="activity-list">
+    {% for item in indexing_issues %}
+    <li class="activity-failure">
+      <article>
+        <strong class="activity-status">{{ "indexing rejected" if item.rejected else "indexing failed — will retry" }}</strong>
+        <p class="activity-url"><a href="{{ item.url }}">{{ item.url }}</a></p>
+        <p class="activity-detail">{{ item.detail }}</p>
+      </article>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
 <section class="activity" aria-labelledby="activity-heading">
-  <h2 id="activity-heading">Recent activity</h2>
+  <h2 id="activity-heading">Recent crawl activity</h2>
   {% if activity %}
   <ul class="activity-list">
     {% for item in activity %}

@@ -1,4 +1,5 @@
 CREATE EXTENSION vector;
+CREATE EXTENSION vchord;
 CREATE EXTENSION pg_tokenizer CASCADE;
 CREATE EXTENSION vchord_bm25 CASCADE;
 
@@ -55,7 +56,7 @@ CREATE TABLE pages (
     indexed_at timestamptz,
     index_error text,
     index_rejected boolean NOT NULL DEFAULT false,
-    embedding halfvec({embedding_dim}),
+    embedding rabitq8({embedding_dim}),
     search_vector bm25vector,
     CHECK (
         (indexed_at IS NULL AND embedding IS NULL AND search_vector IS NULL)
@@ -78,8 +79,8 @@ CREATE INDEX pages_language_idx
     ON pages (language)
     WHERE language IS NOT NULL;
 
-CREATE INDEX pages_embedding_hnsw_idx
-    ON pages USING hnsw (embedding halfvec_cosine_ops)
+CREATE INDEX pages_embedding_idx
+    ON pages USING vchordrq (embedding rabitq8_cosine_ops)
     WHERE indexed_at IS NOT NULL;
 
 CREATE INDEX pages_search_vector_bm25_idx

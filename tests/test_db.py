@@ -10,16 +10,20 @@ from semsearch.web.db import (
     fetch_bm25_candidate_rows,
     fetch_dense_candidate_rows,
     list_available_languages,
+    list_indexing_issues,
     list_recent_activity,
 )
 from semsearch.web.search.filters import SqlPredicate
 
 
-def test_schema_uses_halfvec_hnsw_cosine_index():
+def test_schema_uses_quantized_vectorchord_cosine_index():
     schema = load_schema_sql(Settings(embedding_model="test-model", embedding_dim=2))
 
-    assert "embedding halfvec(2)" in schema
-    assert "USING hnsw (embedding halfvec_cosine_ops)" in schema
+    assert "CREATE EXTENSION vchord;" in schema
+    assert "embedding rabitq8(2)" in schema
+    assert "USING vchordrq (embedding rabitq8_cosine_ops)" in schema
+    assert "halfvec" not in schema
+    assert "hnsw" not in schema
     assert "index_meta" not in schema
 
 
@@ -39,7 +43,7 @@ def test_schema_stores_retrieval_data_on_pages():
     assert "CREATE TABLE chunks" not in schema
     assert "start_offset" not in schema
     assert "content text NOT NULL" in schema
-    assert "embedding halfvec(2)" in schema
+    assert "embedding rabitq8(2)" in schema
     assert "search_vector bm25vector" in schema
     assert "USING bm25 (search_vector bm25_ops)" in schema
     assert (
@@ -175,7 +179,11 @@ async def test_dense_query_returns_full_pages_and_preserves_filter_params():
     assert "JOIN" not in query
     assert "p.indexed_at IS NOT NULL" in query
     assert "p.language = %s" in query
-    assert "ORDER BY p.embedding <=> %s" in query
+    assert "ORDER BY p.embedding <=> quantize_to_rabitq8(%s::vector)" in query
+    assert "-(p.embedding <=> quantize_to_rabitq8(%s::vector)) AS similarity" in query
+    assert "1 -" not in query
+    assert conn.params[0].to_list() == [1.0, 0.0]
+    assert conn.params[2] is conn.params[0]
     assert conn.params[1] == "en"
     assert conn.params[-1] == 12
     page, score = rows[0]
@@ -278,3 +286,35 @@ class InvalidActivityConnection:
 async def test_recent_activity_validates_database_rows():
     with pytest.raises(ValueError, match="invalid recent activity database row"):
         await list_recent_activity(cast(Any, InvalidActivityConnection()))
+
+
+async def test_indexing_issues_include_rejections_and_retryable_errors():
+    class Connection:
+        async def execute(self, query, params):
+            assert "indexed_at IS NULL AND index_error IS NOT NULL" in query
+            assert params == (10,)
+            return self
+
+        async def fetchall(self):
+            return [
+                ("https://example.com/long", "too long", True),
+                ("https://example.com/retry", "provider unavailable", False),
+            ]
+
+    issues = await list_indexing_issues(cast(Any, Connection()))
+    assert [(issue.detail, issue.rejected) for issue in issues] == [
+        ("too long", True),
+        ("provider unavailable", False),
+    ]
+
+
+async def test_indexing_issues_validate_database_rows():
+    class Connection:
+        async def execute(self, query, params):
+            return self
+
+        async def fetchall(self):
+            return [("https://example.com/long", "too long", "true")]
+
+    with pytest.raises(ValueError, match="invalid indexing issue"):
+        await list_indexing_issues(cast(Any, Connection()))

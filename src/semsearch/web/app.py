@@ -21,8 +21,10 @@ from semsearch.share.embeddings import EmbeddingError, create_embeddings
 from semsearch.share.logging import configure_logging
 from semsearch.share.status import IndexStats, fetch_index_stats
 from semsearch.web.db import (
+    IndexingIssue,
     RecentActivity,
     list_available_languages,
+    list_indexing_issues,
     list_recent_activity,
     ping,
 )
@@ -144,11 +146,14 @@ def create_app() -> FastAPI:
             return tuple(await list_available_languages(conn))
 
     @alru_cache(maxsize=1, ttl=1)
-    async def cached_status_data() -> tuple[IndexStats, tuple[RecentActivity, ...]]:
+    async def cached_status_data() -> tuple[
+        IndexStats, tuple[RecentActivity, ...], tuple[IndexingIssue, ...]
+    ]:
         async with app.state.pool.connection() as conn:
             stats = await fetch_index_stats(conn)
             activity = tuple(await list_recent_activity(conn))
-        return stats, activity
+            issues = tuple(await list_indexing_issues(conn))
+        return stats, activity, issues
 
     app.state.list_available_languages = cached_available_languages
     app.state.fetch_status_data = cached_status_data
@@ -247,7 +252,7 @@ def create_app() -> FastAPI:
 
     @app.get("/status", response_class=HTMLResponse)
     async def status(request: Request):
-        stats, activity = await request.app.state.fetch_status_data()
+        stats, activity, issues = await request.app.state.fetch_status_data()
         settings = get_settings()
         return templates.TemplateResponse(
             request,
@@ -256,6 +261,7 @@ def create_app() -> FastAPI:
                 "active_page": "status",
                 "stats": stats,
                 "activity": activity,
+                "indexing_issues": issues,
                 "embedding_model": settings.embedding_model,
                 "embedding_dim": settings.embedding_dim,
             },

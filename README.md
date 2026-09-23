@@ -8,7 +8,7 @@ Semsearch is an embedding-focused indexing and search engine (ideas heavily borr
 
 ## Implementation
 
-FastAPI frontend & pgvector database
+FastAPI frontend & PostgreSQL with VectorChord
 
 Refer to `search(...)` from `semsearch.web.search.pipeline`. Pretty self-explanatory code, hopefully.
 

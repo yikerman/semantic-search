@@ -82,7 +82,7 @@ same-command overlap and cancel work if their connection is lost. There are no
 per-request leases, custom request scheduler or persistent Scrapy job directory.
 The container daemon runs crawl and index jobs independently, immediately at startup
 and periodically after each batch. It also owns future recurring maintenance such
-as tree balancing if the index migrates to `vchordrq`; that job is not implemented.
+as partition rebuilding for `vchordrq`; that job is not implemented.
 Unexpected job failures stop sibling jobs and let the container restart the daemon.
 Podman/Docker Compose is the only supported deployment path. Site registration
 is configuration-only, and both feed-only and sitemap-only sites are supported.
@@ -96,9 +96,13 @@ Version 1.0 requires a fresh database; do not add legacy migrations or adapters.
   plus the full article text.
 - The pinned embedding tokenizer checks whole-document input length without
   truncation. Query and document embedding inputs are sent to the API as text.
-- Dense retrieval uses a pgvector `halfvec` HNSW cosine ANN index. Keep
-  embeddings within pgvector halfvec limits; use MRL truncation if a model
-  exceeds them.
+- Dense retrieval uses VectorChord `rabitq8` storage and a `vchordrq` cosine index.
+  PostgreSQL quantizes document and query vectors from float32 with
+  `quantize_to_rabitq8`; no unquantized embedding copy is stored.
+  The pinned VectorChord 1.1.1 `rabitq8` cosine operator returns negative cosine;
+  negate it for the dense similarity score while ordering by the operator itself.
+  Inputs are limited to pgvector's 16,000-dimensional `vector` type.
+  The initial index is unpartitioned so it can be built on an empty database.
 - Tests use fakes; keep them hermetic.
 
 ## Dev Loop

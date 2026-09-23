@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import LiteralString, cast
 
 import psycopg
-from pgvector import HalfVector
+from pgvector import Vector
 
 from semsearch.share.config import Settings
 
@@ -80,9 +80,9 @@ async def publish_page_index(
     embedding: Sequence[float],
 ) -> None:
     await conn.execute(
-        """UPDATE pages SET embedding = %s,
+        """UPDATE pages SET embedding = quantize_to_rabitq8(%s::vector),
         search_vector = tokenize(%s, 'semsearch_llmlingua2')::bm25vector,
         indexed_at = now(), index_error = NULL
         WHERE id = %s AND indexed_at IS NULL AND NOT index_rejected""",
-        (HalfVector(list(embedding)), text, page_id),
+        (Vector(list(embedding)), text, page_id),
     )
