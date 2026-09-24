@@ -83,7 +83,10 @@ a temporary Scrapy disk queue so pending requests do not fill RAM; it is discard
 after the run and PostgreSQL remains the source for restarting work. There are no
 per-request leases, custom request scheduler or persistent Scrapy job directory.
 The container daemon runs crawl and index jobs independently, immediately at startup
-and periodically after each batch. It also owns future recurring maintenance such
+and periodically after each batch. Crawling runs in a supervised child process so
+Scrapy scheduling cannot block the indexer's event loop. Shutdown waits for the
+crawler to close, then kills its process group if it exceeds the grace period.
+The daemon also owns future recurring maintenance such
 as partition rebuilding for `vchordrq`; that job is not implemented.
 Unexpected job failures stop sibling jobs and let the container restart the daemon.
 Podman/Docker Compose is the only supported deployment path. Site registration

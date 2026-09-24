@@ -1,4 +1,6 @@
 import asyncio
+import signal
+import sys
 from typing import Any, cast
 
 import pytest
@@ -6,6 +8,83 @@ import pytest
 from semsearch.cli import daemon
 from semsearch.cli.locks import AlreadyRunningError
 from semsearch.share.config import Settings
+
+
+class ChildProcess:
+    pid = 123
+
+    def __init__(self, code=None, *, stuck=False):
+        self.returncode = code
+        self.stuck = stuck
+        self.finished = asyncio.Event()
+        self.terminated = False
+        if code is not None:
+            self.finished.set()
+
+    async def wait(self):
+        await self.finished.wait()
+        return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+        if not self.stuck:
+            self.returncode = 143
+            self.finished.set()
+
+
+@pytest.mark.parametrize("code", [0, 1])
+async def test_crawl_child_receives_settings_and_propagates_failure(monkeypatch, code):
+    child = ChildProcess(code)
+
+    async def spawn(*args, **kwargs):
+        assert args == (sys.executable, "-m", "semsearch.cli.app", "crawl")
+        assert kwargs["env"]["CRAWL_ARTICLE_LIMIT"] == "123"
+        assert kwargs["env"]["DATABASE_URL"] == "postgresql://test/test"
+        assert kwargs["start_new_session"]
+        return child
+
+    monkeypatch.setattr(daemon.asyncio, "create_subprocess_exec", spawn)
+    settings = Settings(crawl_article_limit=123, database_url="postgresql://test/test")
+    if code:
+        with pytest.raises(RuntimeError, match="crawl process exited with status 1"):
+            await daemon.run_crawl(settings)
+    else:
+        await daemon.run_crawl(settings)
+    assert not child.terminated
+
+
+@pytest.mark.parametrize("stuck", [False, True])
+async def test_crawl_cancellation_reaps_child_and_kills_stuck_group(monkeypatch, stuck):
+    child = ChildProcess(stuck=stuck)
+    started = asyncio.Event()
+    killed = []
+
+    async def spawn(*args, **kwargs):
+        started.set()
+        return child
+
+    async def shutdown_wait(awaitable, *, timeout):
+        assert timeout == 60
+        if stuck:
+            awaitable.close()
+            raise TimeoutError
+        return await awaitable
+
+    def killpg(pid, sig):
+        killed.append((pid, sig))
+        child.returncode = -9
+        child.finished.set()
+
+    monkeypatch.setattr(daemon.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(daemon.asyncio, "wait_for", shutdown_wait)
+    monkeypatch.setattr(daemon.os, "killpg", killpg)
+    task = asyncio.create_task(daemon.run_crawl(Settings()))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert child.terminated
+    assert killed == ([(child.pid, signal.SIGKILL)] if stuck else [])
 
 
 async def test_repeat_waits_after_success_and_lock_contention(monkeypatch):
