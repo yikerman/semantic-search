@@ -38,6 +38,8 @@ def scrapy_settings(settings: Settings) -> dict[str, object]:
         "METAREFRESH_ENABLED": False,
         "SCHEDULER_PRIORITY_QUEUE": "scrapy.pqueues.DownloaderAwarePriorityQueue",
         "SCHEDULER_MEMORY_QUEUE": "scrapy.squeues.FifoMemoryQueue",
+        "SCHEDULER_DISK_QUEUE": "scrapy.squeues.PickleFifoDiskQueue",
+        "SCHEDULER_DEBUG": True,
         "DOWNLOADER_MIDDLEWARES": {"semsearch.cli.crawl.policy.CrawlPolicy": 560},
         "ITEM_PIPELINES": {"semsearch.cli.crawl.pipeline.ArticlePipeline": 300},
         "LOG_LEVEL": settings.log_level,

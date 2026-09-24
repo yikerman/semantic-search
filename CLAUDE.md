@@ -78,7 +78,9 @@ Both retrievers return pages directly; there is no chunk storage or aggregation.
 Embedding failure never requires another crawl. Search sees only indexed pages.
 
 One crawl and one index command may run concurrently; advisory locks prevent
-same-command overlap and cancel work if their connection is lost. There are no
+same-command overlap and cancel work if their connection is lost. Each batch uses
+a temporary Scrapy disk queue so pending requests do not fill RAM; it is discarded
+after the run and PostgreSQL remains the source for restarting work. There are no
 per-request leases, custom request scheduler or persistent Scrapy job directory.
 The container daemon runs crawl and index jobs independently, immediately at startup
 and periodically after each batch. It also owns future recurring maintenance such

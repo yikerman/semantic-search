@@ -4,6 +4,7 @@ import asyncio
 import gzip
 from collections import Counter
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, ClassVar, cast
 
 import psycopg
@@ -19,9 +20,11 @@ from semsearch.share.config import Settings
 class FixtureHTTP:
     lazy = True
     calls: ClassVar[Counter[str]] = Counter()
+    crawlers: ClassVar[list[Any]] = []
 
     @classmethod
     def from_crawler(cls, crawler):
+        cls.crawlers.append(crawler)
         return cls()
 
     async def download_request(self, request):
@@ -151,6 +154,7 @@ async def test_real_engine_crawl_replay_and_fatal_database_error(monkeypatch):
     monkeypatch.setattr(run, "scrapy_settings", settings)
     config = Settings(crawl_delay_seconds=0)
     FixtureHTTP.calls.clear()
+    FixtureHTTP.crawlers.clear()
     await asyncio.wait_for(run.run_crawl(cast(Any, object()), config), timeout=15)
     assert set(pages) == {"https://blog.example/good", "https://blog.example/flaky"}
     assert rows["https://blog.example/blocked"] == "rejected"
@@ -159,6 +163,10 @@ async def test_real_engine_crawl_replay_and_fatal_database_error(monkeypatch):
     assert FixtureHTTP.calls["https://blog.example/blocked"] == 0
     assert FixtureHTTP.calls["https://blog.example/flaky"] == 2
     assert finishes[-1]["error"] is None
+    crawler = FixtureHTTP.crawlers[-1]
+    assert crawler.stats.get_value("scheduler/enqueued/disk", 0) > 0
+    assert crawler.stats.get_value("scheduler/enqueued/memory", 0) == 0
+    assert not Path(crawler.settings["JOBDIR"]).exists()
     previous = FixtureHTTP.calls["https://blog.example/good"]
     await asyncio.wait_for(run.run_crawl(cast(Any, object()), config), timeout=15)
     assert FixtureHTTP.calls["https://blog.example/good"] == previous
@@ -202,3 +210,5 @@ async def test_real_engine_crawl_replay_and_fatal_database_error(monkeypatch):
         await asyncio.wait_for(task, timeout=5)
     assert InlinePool.closed == closed_before + 1
     assert len(finishes) == 2
+    for crawler in FixtureHTTP.crawlers:
+        assert not Path(crawler.settings["JOBDIR"]).exists()

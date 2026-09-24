@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from tempfile import TemporaryDirectory
 from time import monotonic
 
 from psycopg_pool import AsyncConnectionPool
@@ -21,58 +22,60 @@ logger = logging.getLogger(__name__)
 async def run_crawl(
     pool: AsyncConnectionPool, settings: Settings, *, retry_failed: bool = False
 ) -> None:
-    async with command_lock(pool, CRAWL_LOCK):
-        install_reactor("twisted.internet.asyncioreactor.AsyncioSelectorReactor")
-        from typing import cast
+    with TemporaryDirectory(prefix="semsearch-crawl-") as jobdir:
+        async with command_lock(pool, CRAWL_LOCK):
+            install_reactor("twisted.internet.asyncioreactor.AsyncioSelectorReactor")
+            from typing import cast
 
-        from twisted.internet import reactor
-        from twisted.internet.base import ReactorBase
+            from twisted.internet import reactor
+            from twisted.internet.base import ReactorBase
 
-        options = scrapy_settings(settings)
-        options["REQUEST_FINGERPRINTER_CLASS"] = (
-            "semsearch.cli.crawl.spider.PurposeFingerprinter"
-        )
-        runner = AsyncCrawlerRunner(options)
-        # Runners share our event loop and do not install a resolver themselves.
-        PublicResolver(
-            cast(ReactorBase, reactor), 10000, settings.crawl_timeout_seconds
-        ).install_on_reactor()
-        if retry_failed:
-            await store.reset_failures(pool)
-        sites = await list_sites(pool)
-        cooldowns = await store.load_cooldowns(pool)
-        extractor = ExtractionPool(
-            settings.extraction_workers, settings.extraction_timeout_seconds
-        )
-        crawler = runner.create_crawler(BlogSpider)
-        started = monotonic()
-        crawl_task = runner.crawl(
-            crawler,
-            pool=pool,
-            config=settings,
-            sites=sites,
-            extractor=extractor,
-            cooldowns=cooldowns,
-        )
-        try:
-            # Scrapy consumes cancellation while closing its engine. Keep it
-            # on the owner so interrupted batches never publish completion.
-            await asyncio.shield(crawl_task)
-            spider = crawler.spider
-            assert isinstance(spider, BlogSpider)
-            if spider.fatal_error:
-                raise RuntimeError(
-                    "crawl aborted after an application failure"
-                ) from spider.fatal_error
-            await spider.finish()
-        except asyncio.CancelledError:
-            await runner.stop()
-            await crawl_task
-            raise
-        finally:
-            await extractor.close()
-        logger.info(
-            "Crawl batch finished in %.1fs: %s",
-            monotonic() - started,
-            crawler.stats.get_stats() if crawler.stats else {},
-        )
+            options = scrapy_settings(settings)
+            options["JOBDIR"] = jobdir
+            options["REQUEST_FINGERPRINTER_CLASS"] = (
+                "semsearch.cli.crawl.spider.PurposeFingerprinter"
+            )
+            runner = AsyncCrawlerRunner(options)
+            # Runners share our event loop and do not install a resolver themselves.
+            PublicResolver(
+                cast(ReactorBase, reactor), 10000, settings.crawl_timeout_seconds
+            ).install_on_reactor()
+            if retry_failed:
+                await store.reset_failures(pool)
+            sites = await list_sites(pool)
+            cooldowns = await store.load_cooldowns(pool)
+            extractor = ExtractionPool(
+                settings.extraction_workers, settings.extraction_timeout_seconds
+            )
+            crawler = runner.create_crawler(BlogSpider)
+            started = monotonic()
+            crawl_task = runner.crawl(
+                crawler,
+                pool=pool,
+                config=settings,
+                sites=sites,
+                extractor=extractor,
+                cooldowns=cooldowns,
+            )
+            try:
+                # Scrapy consumes cancellation while closing its engine. Keep it
+                # on the owner so interrupted batches never publish completion.
+                await asyncio.shield(crawl_task)
+                spider = crawler.spider
+                assert isinstance(spider, BlogSpider)
+                if spider.fatal_error:
+                    raise RuntimeError(
+                        "crawl aborted after an application failure"
+                    ) from spider.fatal_error
+                await spider.finish()
+            except asyncio.CancelledError:
+                await runner.stop()
+                await crawl_task
+                raise
+            finally:
+                await extractor.close()
+            logger.info(
+                "Crawl batch finished in %.1fs: %s",
+                monotonic() - started,
+                crawler.stats.get_stats() if crawler.stats else {},
+            )
