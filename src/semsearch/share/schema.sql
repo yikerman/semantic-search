@@ -66,6 +66,9 @@ CREATE TABLE pages (
 
 CREATE INDEX pages_pending_index_idx ON pages (id) WHERE indexed_at IS NULL AND NOT index_rejected;
 
+CREATE INDEX pages_indexing_issues_idx ON pages (id DESC)
+    WHERE indexed_at IS NULL AND index_error IS NOT NULL;
+
 CREATE INDEX pages_site_idx ON pages (site_id);
 
 CREATE INDEX pages_recent_idx

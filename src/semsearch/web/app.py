@@ -145,7 +145,8 @@ def create_app() -> FastAPI:
         async with app.state.pool.connection() as conn:
             return tuple(await list_available_languages(conn))
 
-    @alru_cache(maxsize=1, ttl=1)
+    # Exact totals scan the corpus; share them across status-page refreshes.
+    @alru_cache(maxsize=1, ttl=30)
     async def cached_status_data() -> tuple[
         IndexStats, tuple[RecentActivity, ...], tuple[IndexingIssue, ...]
     ]:
