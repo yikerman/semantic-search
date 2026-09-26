@@ -4,6 +4,13 @@
 
 {% block content %}
 <h2>Status</h2>
+{% if refresh_failed %}
+<p role="status">Status could not be refreshed.{% if stats %} Showing the last available update.{% else %} Retrying shortly.{% endif %}</p>
+{% elif not stats %}
+<p role="status">Collecting status. Refresh this page in a moment.</p>
+{% endif %}
+{% if stats %}
+<p>Updated <time datetime="{{ updated_at.isoformat() }}">{{ updated_at.strftime("%Y-%m-%d %H:%M:%S %Z") }}</time>.</p>
 <table>
   <caption>Index totals</caption>
   <tbody>
@@ -80,6 +87,7 @@
   <p>No recent activity.</p>
   {% endif %}
 </section>
+{% endif %}
 {% endblock %}
 
 {% block page_footer %}

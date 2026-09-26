@@ -1,5 +1,6 @@
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, date, datetime
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -19,6 +20,7 @@ from semsearch.web.app import (
 )
 from semsearch.web.db import IndexingIssue, RecentActivity
 from semsearch.web.search.models import PageCandidate
+from semsearch.web.status import collect_status
 
 
 def test_cli_is_admin_only():
@@ -216,15 +218,16 @@ async def test_status_page_shows_recent_activity(monkeypatch):
             ),
         ]
 
-    monkeypatch.setattr("semsearch.web.app.fetch_index_stats", stats)
-    monkeypatch.setattr("semsearch.web.app.list_recent_activity", activity)
-    monkeypatch.setattr("semsearch.web.app.list_indexing_issues", issues)
+    monkeypatch.setattr("semsearch.web.status.fetch_index_stats", stats)
+    monkeypatch.setattr("semsearch.web.status.list_recent_activity", activity)
+    monkeypatch.setattr("semsearch.web.status.list_indexing_issues", issues)
     monkeypatch.setattr(
         "semsearch.web.app.get_settings",
         lambda: Settings(embedding_model="test-model", embedding_dim=8),
     )
     app = create_app()
     app.state.pool = FakePool()
+    app.state.status.snapshot = await collect_status(cast(Any, app.state.pool))
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

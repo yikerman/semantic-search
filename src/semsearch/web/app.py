@@ -1,6 +1,7 @@
+import asyncio
 import logging
 from collections.abc import Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, date
 from functools import partial
@@ -19,13 +20,8 @@ from semsearch.share.config import get_settings
 from semsearch.share.db import create_pool
 from semsearch.share.embeddings import EmbeddingError, create_embeddings
 from semsearch.share.logging import configure_logging
-from semsearch.share.status import IndexStats, fetch_index_stats
 from semsearch.web.db import (
-    IndexingIssue,
-    RecentActivity,
     list_available_languages,
-    list_indexing_issues,
-    list_recent_activity,
     ping,
 )
 from semsearch.web.search.filters import (
@@ -36,6 +32,7 @@ from semsearch.web.search.filters import (
 from semsearch.web.search.models import PageCandidate
 from semsearch.web.search.pipeline import rerank_by_length, search
 from semsearch.web.search.retrievers import retrieve_bm25, retrieve_dense
+from semsearch.web.status import StatusState, refresh_status
 
 # Configure at import time: uvicorn loads this module before it logs its own
 # startup lines, so even those render through our handler.
@@ -129,35 +126,29 @@ async def lifespan(app: FastAPI):
             settings.embedding_model,
             settings.embedding_dim,
         )
+        status_task = asyncio.create_task(
+            refresh_status(pool, app.state.status), name="status-refresh"
+        )
         try:
             yield
         finally:
+            status_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await status_task
             await app.state.list_available_languages.cache_close()
-            await app.state.fetch_status_data.cache_close()
             logger.info("Stopping web application")
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="semsearch", lifespan=lifespan)
+    app.state.status = StatusState()
 
     @alru_cache(maxsize=1, ttl=300)
     async def cached_available_languages() -> tuple[str, ...]:
         async with app.state.pool.connection() as conn:
             return tuple(await list_available_languages(conn))
 
-    # Exact totals scan the corpus; share them across status-page refreshes.
-    @alru_cache(maxsize=1, ttl=30)
-    async def cached_status_data() -> tuple[
-        IndexStats, tuple[RecentActivity, ...], tuple[IndexingIssue, ...]
-    ]:
-        async with app.state.pool.connection() as conn:
-            stats = await fetch_index_stats(conn)
-            activity = tuple(await list_recent_activity(conn))
-            issues = tuple(await list_indexing_issues(conn))
-        return stats, activity, issues
-
     app.state.list_available_languages = cached_available_languages
-    app.state.fetch_status_data = cached_status_data
     app.mount(
         "/static",
         StaticFiles(directory=Path(__file__).parent / "static"),
@@ -253,16 +244,19 @@ def create_app() -> FastAPI:
 
     @app.get("/status", response_class=HTMLResponse)
     async def status(request: Request):
-        stats, activity, issues = await request.app.state.fetch_status_data()
+        state: StatusState = request.app.state.status
+        snapshot = state.snapshot
         settings = get_settings()
         return templates.TemplateResponse(
             request,
             "status.html",
             {
                 "active_page": "status",
-                "stats": stats,
-                "activity": activity,
-                "indexing_issues": issues,
+                "stats": snapshot.stats if snapshot else None,
+                "activity": snapshot.activity if snapshot else (),
+                "indexing_issues": snapshot.issues if snapshot else (),
+                "updated_at": snapshot.updated_at if snapshot else None,
+                "refresh_failed": state.refresh_failed,
                 "embedding_model": settings.embedding_model,
                 "embedding_dim": settings.embedding_dim,
             },
