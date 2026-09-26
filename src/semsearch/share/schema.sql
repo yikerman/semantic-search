@@ -35,7 +35,7 @@ CREATE TABLE article_urls (
 );
 CREATE INDEX article_urls_pending_idx ON article_urls (site_id, next_attempt_at, id)
     WHERE status = 'pending';
-CREATE INDEX article_urls_failure_idx ON article_urls (updated_at DESC)
+CREATE INDEX article_urls_recent_failure_idx ON article_urls (updated_at DESC, url)
     WHERE status IN ('rejected', 'failed');
 
 CREATE TABLE origin_cooldowns (
