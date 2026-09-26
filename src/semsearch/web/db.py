@@ -136,21 +136,30 @@ async def list_recent_activity(
 ) -> list[RecentActivity]:
     cur = await conn.execute(
         """
-        SELECT url, status, occurred_at, failed_batches, detail
-        FROM (
+        WITH recent_pages AS (
             SELECT url, 'success' AS status, fetched_at AS occurred_at,
                    NULL::int AS failed_batches, NULL::text AS detail
             FROM pages
-            UNION ALL
+            ORDER BY fetched_at DESC, url
+            LIMIT %s
+        ), recent_failures AS (
             SELECT url, 'failure' AS status, updated_at AS occurred_at,
                    failed_batches, last_error AS detail
             FROM article_urls
             WHERE status IN ('failed', 'rejected')
+            ORDER BY updated_at DESC, url
+            LIMIT %s
+        )
+        SELECT url, status, occurred_at, failed_batches, detail
+        FROM (
+            SELECT * FROM recent_pages
+            UNION ALL
+            SELECT * FROM recent_failures
         ) AS activity
         ORDER BY occurred_at DESC, url
         LIMIT %s
         """,
-        (limit,),
+        (limit, limit, limit),
     )
     return [_recent_activity_from_row(row) for row in await cur.fetchall()]
 

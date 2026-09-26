@@ -1,3 +1,5 @@
+import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -267,10 +269,50 @@ async def test_recent_activity_combines_successes_and_failures():
     assert "FROM pages" in conn.query
     assert "FROM article_urls" in conn.query
     assert "ORDER BY occurred_at DESC, url" in conn.query
-    assert conn.params == (10,)
+    assert conn.params == (10, 10, 10)
     assert [item.status for item in activity] == ["success", "failure"]
     assert activity[1].failed_batches == 3
     assert activity[1].detail == "GET returned 404"
+
+
+async def test_recent_activity_limits_preserve_global_order_and_ties():
+    with closing(sqlite3.connect(":memory:")) as database:
+        database.executescript("""
+            CREATE TABLE pages (url text, fetched_at text);
+            CREATE TABLE article_urls (
+                url text, updated_at text, status text, failed_batches int, last_error text
+            );
+        """)
+        expected = []
+        for i in range(20):
+            when = f"2026-09-26T12:{i // 4:02d}:00+00:00"
+            url = f"https://example.com/{i:02d}"
+            if i % 2:
+                database.execute("INSERT INTO pages VALUES (?, ?)", (url, when))
+            else:
+                database.execute(
+                    "INSERT INTO article_urls VALUES (?, ?, 'failed', 1, 'timeout')",
+                    (url, when),
+                )
+            expected.append((url, datetime.fromisoformat(when)))
+        expected.sort(key=lambda row: (-row[1].timestamp(), row[0]))
+
+        class Connection:
+            async def execute(self, query, params):
+                query = (
+                    query.replace("%s", "?").replace("::int", "").replace("::text", "")
+                )
+                self.rows = database.execute(query, params).fetchall()
+                return self
+
+            async def fetchall(self):
+                return [
+                    (url, status, datetime.fromisoformat(when), batches, error)
+                    for url, status, when, batches, error in self.rows
+                ]
+
+        rows = await list_recent_activity(cast(Any, Connection()), limit=5)
+        assert [(row.url, row.occurred_at) for row in rows] == expected[:5]
 
 
 class InvalidActivityCursor:
