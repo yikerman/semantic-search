@@ -13,7 +13,12 @@ def load_schema_sql(settings: Settings) -> LiteralString:
     raw = (
         importlib.resources.files("semsearch.share").joinpath("schema.sql").read_text()
     )
-    return cast(LiteralString, raw.format(embedding_dim=settings.embedding_dim))
+    stats = (
+        importlib.resources.files("semsearch.share").joinpath("stats.sql").read_text()
+    )
+    return cast(
+        LiteralString, raw.format(embedding_dim=settings.embedding_dim) + "\n" + stats
+    )
 
 
 async def init_schema(settings: Settings) -> None:

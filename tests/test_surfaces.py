@@ -129,6 +129,9 @@ def test_published_range_rejects_malformed_and_reversed_dates():
 
 
 class FakeConnection(AbstractAsyncContextManager):
+    async def execute(self, query):
+        assert query == "SET LOCAL statement_timeout = '5s'"
+
     async def __aenter__(self):
         return self
 

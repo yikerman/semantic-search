@@ -29,24 +29,13 @@ class FailedArticle:
 async def fetch_index_stats(conn: psycopg.AsyncConnection) -> IndexStats:
     cur = await conn.execute(
         """
-        SELECT (SELECT count(*) FROM sites),
-               p.total, p.indexed, u.pending, u.retrying, u.failed, u.rejected,
-               p.pending, p.failed, p.rejected
-        FROM (
-            SELECT count(*) AS total,
-                   count(*) FILTER (WHERE indexed_at IS NOT NULL) AS indexed,
-                   count(*) FILTER (WHERE indexed_at IS NULL AND NOT index_rejected) AS pending,
-                   count(*) FILTER (WHERE indexed_at IS NULL AND NOT index_rejected AND index_error IS NOT NULL) AS failed,
-                   count(*) FILTER (WHERE index_rejected) AS rejected
-            FROM pages
-        ) p
-        CROSS JOIN (
-            SELECT count(*) FILTER (WHERE status = 'pending') AS pending,
-                   count(*) FILTER (WHERE status = 'pending' AND failed_batches > 0) AS retrying,
-                   count(*) FILTER (WHERE status = 'failed') AS failed,
-                   count(*) FILTER (WHERE status = 'rejected') AS rejected
-            FROM article_urls
-        ) u
+        SELECT count(*),
+               coalesce(sum(page_count), 0)::bigint, coalesce(sum(indexed_count), 0)::bigint,
+               coalesce(sum(queued_count), 0)::bigint, coalesce(sum(retrying_count), 0)::bigint,
+               coalesce(sum(failed_count), 0)::bigint, coalesce(sum(rejected_count), 0)::bigint,
+               coalesce(sum(page_count - indexed_count - rejected_index_count), 0)::bigint,
+               coalesce(sum(failed_index_count), 0)::bigint, coalesce(sum(rejected_index_count), 0)::bigint
+        FROM site_stats
         """
     )
     return _index_stats_from_row(await cur.fetchone())

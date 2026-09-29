@@ -169,3 +169,39 @@ async def test_lifespan_starts_refresh_and_cancels_before_closing_pool(monkeypat
         assert not stopped.is_set()
     assert stopped.is_set()
     assert closed.is_set()
+
+
+@pytest.mark.parametrize("failure", ["error", "timeout"])
+async def test_detail_failure_still_publishes_fresh_totals(monkeypatch, failure):
+    class Connection:
+        async def execute(self, query):
+            assert query == "SET LOCAL statement_timeout = '5s'"
+
+    class Pool:
+        @asynccontextmanager
+        async def connection(self):
+            yield Connection()
+
+    async def stats(conn):
+        return IndexStats(1, 123, 120, 0, 0, 0)
+
+    async def activity(conn):
+        if failure == "timeout":
+            raise TimeoutError
+        raise OSError("details unavailable")
+
+    monkeypatch.setattr(status, "fetch_index_stats", stats)
+    monkeypatch.setattr(status, "list_recent_activity", activity)
+    result = await status.collect_status(cast(Any, Pool()))
+    assert result.stats.page_count == 123
+    assert result.details_failed
+    app = create_app()
+    app.state.status.snapshot = result
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/status")
+    assert "<td>123</td>" in response.text
+    assert "Recent activity could not be refreshed" in response.text
+    assert "No recent activity" not in response.text
+    assert "Status could not be refreshed" not in response.text

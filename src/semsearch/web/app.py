@@ -257,6 +257,7 @@ def create_app() -> FastAPI:
                 "indexing_issues": snapshot.issues if snapshot else (),
                 "updated_at": snapshot.updated_at if snapshot else None,
                 "refresh_failed": state.refresh_failed,
+                "details_failed": snapshot.details_failed if snapshot else False,
                 "embedding_model": settings.embedding_model,
                 "embedding_dim": settings.embedding_dim,
             },

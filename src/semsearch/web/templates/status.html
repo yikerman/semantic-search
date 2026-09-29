@@ -45,6 +45,9 @@
   </tbody>
 </table>
 
+{% if details_failed %}
+<p role="status">Recent activity could not be refreshed. Retrying shortly.</p>
+{% else %}
 {% if indexing_issues %}
 <section class="activity" aria-labelledby="indexing-issues-heading">
   <h2 id="indexing-issues-heading">Indexing issues</h2>
@@ -87,6 +90,7 @@
   <p>No recent activity.</p>
   {% endif %}
 </section>
+{% endif %}
 {% endif %}
 {% endblock %}
 

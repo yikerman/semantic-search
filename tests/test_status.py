@@ -5,18 +5,17 @@ from typing import Any, cast
 from semsearch.share.status import IndexStats, fetch_index_stats, list_failed_articles
 
 
-async def test_status_aggregates_empty_and_mixed_outcomes():
-    # These standard SQL aggregates can run locally without a Postgres service.
+async def test_status_aggregates_empty_and_multiple_sites():
     with closing(sqlite3.connect(":memory:")) as database:
-        database.executescript("""
-            CREATE TABLE sites (id int);
-            CREATE TABLE pages (indexed_at text, index_rejected boolean, index_error text);
-            CREATE TABLE article_urls (status text, failed_batches int);
-        """)
+        database.execute("""CREATE TABLE site_stats (
+            site_id int, page_count int, indexed_count int, rejected_index_count int,
+            failed_index_count int, queued_count int, retrying_count int,
+            failed_count int, rejected_count int
+        )""")
 
         class Connection:
             async def execute(self, query):
-                self.row = database.execute(query).fetchone()
+                self.row = database.execute(query.replace("::bigint", "")).fetchone()
                 return self
 
             async def fetchone(self):
@@ -25,17 +24,13 @@ async def test_status_aggregates_empty_and_mixed_outcomes():
         conn = cast(Any, Connection())
         assert await fetch_index_stats(conn) == IndexStats(0, 0, 0, 0, 0, 0)
         database.executescript("""
-            INSERT INTO sites VALUES (1);
-            INSERT INTO pages VALUES
-                ('2026-01-01', false, NULL),
-                (NULL, false, NULL),
-                (NULL, false, 'provider unavailable'),
-                (NULL, true, 'too long');
-            INSERT INTO article_urls VALUES
-                ('stored', 0), ('pending', 0), ('pending', 1),
-                ('failed', 3), ('rejected', 0);
+            INSERT INTO site_stats VALUES (1, 4, 1, 1, 1, 2, 1, 1, 1);
+            INSERT INTO site_stats VALUES (2, 7, 5, 1, 0, 3, 0, 0, 2);
+            INSERT INTO site_stats VALUES (3, 0, 0, 0, 0, 0, 0, 0, 0);
         """)
-        assert await fetch_index_stats(conn) == IndexStats(1, 4, 1, 2, 1, 1, 1, 2, 1, 1)
+        assert await fetch_index_stats(conn) == IndexStats(
+            3, 11, 6, 5, 1, 1, 3, 3, 1, 2
+        )
 
 
 class StatsCursor:
@@ -59,13 +54,9 @@ async def test_index_stats_count_pages_and_separate_rejections():
 
     assert stats == IndexStats(5, 100, 93, 20, 3, 2, 4, 5, 1, 2)
     assert conn.query is not None
-    assert "indexed_at IS NOT NULL" in conn.query
-    assert "NOT index_rejected" in conn.query
-    assert "WHERE index_rejected" in conn.query
-    assert "indexed_at IS NULL" in conn.query
-    assert "index_error IS NOT NULL" in conn.query
-    assert conn.query.count("FROM article_urls") == 1
-    assert conn.query.count("FROM pages") == 1
+    assert "FROM site_stats" in conn.query
+    assert "FROM pages" not in conn.query
+    assert "FROM article_urls" not in conn.query
 
 
 async def test_index_stats_reject_invalid_database_rows():

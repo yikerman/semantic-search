@@ -93,6 +93,11 @@ Podman/Docker Compose is the only supported deployment path. Site registration
 is configuration-only, and both feed-only and sitemap-only sites are supported.
 Version 1.0 requires a fresh database; do not add legacy migrations or adapters.
 
+Status totals come from transactional per-site counters in `share/stats.sql`.
+Statement triggers aggregate actual row changes, including retries and cascaded
+deletes; status reads must not scan the corpus. The web snapshot refreshes every
+30 seconds, and detail-query failures must not block fresh totals.
+
 ## Constraints
 
 - One database holds one embedding space. Changing `EMBEDDING_MODEL` or

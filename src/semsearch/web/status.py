@@ -22,6 +22,7 @@ class StatusSnapshot:
     activity: tuple[RecentActivity, ...]
     issues: tuple[IndexingIssue, ...]
     updated_at: datetime
+    details_failed: bool = False
 
 
 @dataclass
@@ -31,20 +32,29 @@ class StatusState:
 
 
 async def collect_status(pool: AsyncConnectionPool) -> StatusSnapshot:
-    async with pool.connection() as conn:
+    async with asyncio.timeout(5), pool.connection() as conn:
+        await conn.execute("SET LOCAL statement_timeout = '5s'")
         stats = await fetch_index_stats(conn)
-        activity = tuple(await list_recent_activity(conn))
-        issues = tuple(await list_indexing_issues(conn))
-    return StatusSnapshot(stats, activity, issues, datetime.now(UTC))
+    updated_at = datetime.now(UTC)
+    # Detail queries must not prevent publication of fresh totals.
+    try:
+        async with asyncio.timeout(5), pool.connection() as conn:
+            await conn.execute("SET LOCAL statement_timeout = '5s'")
+            activity = tuple(await list_recent_activity(conn))
+            issues = tuple(await list_indexing_issues(conn))
+    except Exception:
+        logger.exception("Status details refresh failed")
+        return StatusSnapshot(stats, (), (), updated_at, details_failed=True)
+    return StatusSnapshot(stats, activity, issues, updated_at)
 
 
 async def refresh_status(
-    pool: AsyncConnectionPool, state: StatusState, *, interval: float = 300
+    pool: AsyncConnectionPool, state: StatusState, *, interval: float = 30
 ) -> None:
-    """Publish complete snapshots without making HTTP requests wait for scans."""
+    """Publish cached counters and bounded details without blocking HTTP requests."""
     while True:
         try:
-            async with asyncio.timeout(120):
+            async with asyncio.timeout(15):
                 snapshot = await collect_status(pool)
         except Exception:
             state.refresh_failed = True
