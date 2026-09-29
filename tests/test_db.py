@@ -74,7 +74,7 @@ def test_schema_adds_page_language_metadata():
     schema = load_schema_sql(Settings(embedding_model="test-model", embedding_dim=2))
 
     assert "language text" in schema
-    assert "pages_language_idx" in schema
+    assert "pages_indexed_language_idx" in schema
     assert "WHERE language IS NOT NULL" in schema
 
 
@@ -360,3 +360,32 @@ async def test_indexing_issues_validate_database_rows():
 
     with pytest.raises(ValueError, match="invalid indexing issue"):
         await list_indexing_issues(cast(Any, Connection()))
+
+
+async def test_language_query_returns_only_distinct_indexed_languages():
+    with closing(sqlite3.connect(":memory:")) as database:
+        database.execute("CREATE TABLE pages (language text, indexed_at text)")
+
+        class Connection:
+            async def execute(self, query):
+                self.rows = database.execute(query).fetchall()
+                return self
+
+            async def fetchall(self):
+                return self.rows
+
+        conn = cast(Any, Connection())
+        assert await list_available_languages(conn) == []
+        database.executemany(
+            "INSERT INTO pages VALUES (?, ?)",
+            [
+                (None, "now"),
+                ("de", None),
+                ("en", "now"),
+                ("en", "now"),
+                ("fr", "now"),
+                ("pcm", "now"),
+                ("zz", None),
+            ],
+        )
+        assert await list_available_languages(conn) == ["en", "fr", "pcm"]

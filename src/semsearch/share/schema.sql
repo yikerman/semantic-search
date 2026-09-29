@@ -78,9 +78,9 @@ CREATE INDEX pages_published_at_idx
     ON pages (published_at)
     WHERE published_at IS NOT NULL;
 
-CREATE INDEX pages_language_idx
+CREATE INDEX pages_indexed_language_idx
     ON pages (language)
-    WHERE language IS NOT NULL;
+    WHERE language IS NOT NULL AND indexed_at IS NOT NULL;
 
 CREATE INDEX pages_embedding_idx
     ON pages USING vchordrq (embedding rabitq8_cosine_ops)

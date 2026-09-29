@@ -106,12 +106,19 @@ async def ping(conn: psycopg.AsyncConnection) -> None:
 
 
 async def list_available_languages(conn: psycopg.AsyncConnection) -> list[str]:
+    # Seek past each language in the partial index instead of scanning duplicates.
     cur = await conn.execute(
         """
-        SELECT DISTINCT language
-        FROM pages
-        WHERE language IS NOT NULL AND indexed_at IS NOT NULL
-        ORDER BY language
+        WITH RECURSIVE languages AS (
+            SELECT min(language) AS language FROM pages
+            WHERE language IS NOT NULL AND indexed_at IS NOT NULL
+            UNION ALL
+            SELECT (SELECT min(p.language) FROM pages p
+                    WHERE p.language IS NOT NULL AND p.indexed_at IS NOT NULL
+                      AND p.language > languages.language)
+            FROM languages WHERE language IS NOT NULL
+        )
+        SELECT language FROM languages WHERE language IS NOT NULL ORDER BY language
         """
     )
     languages: list[str] = []

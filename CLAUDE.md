@@ -96,7 +96,9 @@ Version 1.0 requires a fresh database; do not add legacy migrations or adapters.
 Status totals come from transactional per-site counters in `share/stats.sql`.
 Statement triggers aggregate actual row changes, including retries and cascaded
 deletes; status reads must not scan the corpus. The web snapshot refreshes every
-30 seconds, and detail-query failures must not block fresh totals.
+30 seconds, and detail-query failures must not block fresh totals. Homepage
+language options refresh in the background using one index seek per language;
+rendering the empty search form must not query the database.
 
 ## Constraints
 

@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from collections.abc import Mapping, Sequence
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, date
 from functools import partial
@@ -9,7 +9,6 @@ from pathlib import Path
 from time import perf_counter
 from typing import Annotated
 
-from async_lru import alru_cache
 from fastapi import FastAPI, Query, Request
 from fastapi import status as http_status
 from fastapi.responses import HTMLResponse
@@ -20,10 +19,8 @@ from semsearch.share.config import get_settings
 from semsearch.share.db import create_pool
 from semsearch.share.embeddings import EmbeddingError, create_embeddings
 from semsearch.share.logging import configure_logging
-from semsearch.web.db import (
-    list_available_languages,
-    ping,
-)
+from semsearch.web.db import ping
+from semsearch.web.languages import LanguageState, refresh_languages
 from semsearch.web.search.filters import (
     SearchFilter,
     filter_by_language,
@@ -126,16 +123,20 @@ async def lifespan(app: FastAPI):
             settings.embedding_model,
             settings.embedding_dim,
         )
-        status_task = asyncio.create_task(
-            refresh_status(pool, app.state.status), name="status-refresh"
+        tasks = (
+            asyncio.create_task(
+                refresh_status(pool, app.state.status), name="status-refresh"
+            ),
+            asyncio.create_task(
+                refresh_languages(pool, app.state.languages), name="language-refresh"
+            ),
         )
         try:
             yield
         finally:
-            status_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await status_task
-            await app.state.list_available_languages.cache_close()
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             logger.info("Stopping web application")
 
 
@@ -143,12 +144,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="semsearch", lifespan=lifespan)
     app.state.status = StatusState()
 
-    @alru_cache(maxsize=1, ttl=300)
-    async def cached_available_languages() -> tuple[str, ...]:
-        async with app.state.pool.connection() as conn:
-            return tuple(await list_available_languages(conn))
-
-    app.state.list_available_languages = cached_available_languages
+    app.state.languages = LanguageState()
     app.mount(
         "/static",
         StaticFiles(directory=Path(__file__).parent / "static"),
@@ -171,7 +167,7 @@ def create_app() -> FastAPI:
         status_code = http_status.HTTP_200_OK
         query = q.strip()
         selected_language = lang.lower() if lang else None
-        available_languages = await request.app.state.list_available_languages()
+        available_languages = request.app.state.languages.codes
         range_start: date | None = None
         range_end: date | None = None
         try:

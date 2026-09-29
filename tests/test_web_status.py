@@ -139,6 +139,7 @@ async def test_refresh_timeout_preserves_previous_snapshot(monkeypatch):
 async def test_lifespan_starts_refresh_and_cancels_before_closing_pool(monkeypatch):
     started = asyncio.Event()
     stopped = asyncio.Event()
+    languages_stopped = asyncio.Event()
     closed = asyncio.Event()
 
     @asynccontextmanager
@@ -160,6 +161,14 @@ async def test_lifespan_starts_refresh_and_cancels_before_closing_pool(monkeypat
             assert not closed.is_set()
             stopped.set()
 
+    async def refresh_languages(pool, state):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            assert not closed.is_set()
+            languages_stopped.set()
+
+    monkeypatch.setattr(web_app, "refresh_languages", refresh_languages)
     monkeypatch.setattr(web_app, "create_pool", pool)
     monkeypatch.setattr(web_app, "create_embeddings", embeddings)
     monkeypatch.setattr(web_app, "refresh_status", refresh)
@@ -168,6 +177,7 @@ async def test_lifespan_starts_refresh_and_cancels_before_closing_pool(monkeypat
         await asyncio.wait_for(started.wait(), timeout=2)
         assert not stopped.is_set()
     assert stopped.is_set()
+    assert languages_stopped.is_set()
     assert closed.is_set()
 
 

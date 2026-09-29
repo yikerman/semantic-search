@@ -17,38 +17,21 @@ class Pool:
         yield object()
 
 
-async def languages(conn):
-    return ["en", "fr"]
-
-
-async def test_available_languages_are_cached(monkeypatch):
-    calls = 0
-
-    async def counting_languages(conn):
-        nonlocal calls
-        calls += 1
-        return ["en", "fr"]
-
+async def test_homepage_uses_language_snapshot_without_database_access():
     app = create_app()
-    app.state.pool = Pool()
-    monkeypatch.setattr(
-        "semsearch.web.app.list_available_languages", counting_languages
-    )
+    app.state.languages.codes = ("en", "fr")
+    # No pool is configured: a plain homepage must not need one.
     transport = httpx.ASGITransport(app=app)
-
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        first = await client.get("/")
-        second = await client.get("/")
-
-    assert first.status_code == 200
-    assert second.status_code == 200
-    assert calls == 1
+        response = await client.get("/")
+    assert response.status_code == 200
+    assert '<option value="fr"' in response.text
 
 
 async def test_search_form_defaults_to_english_and_dense(monkeypatch):
     app = create_app()
     app.state.pool = Pool()
-    monkeypatch.setattr("semsearch.web.app.list_available_languages", languages)
+    app.state.languages.codes = ("en", "fr")
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -87,7 +70,7 @@ async def test_search_logs_duration_and_result_count_without_query(caplog, monke
         return []
 
     monkeypatch.setattr("semsearch.web.app.search", fake_search)
-    monkeypatch.setattr("semsearch.web.app.list_available_languages", languages)
+    app.state.languages.codes = ("en", "fr")
     transport = httpx.ASGITransport(app=app)
 
     with caplog.at_level(logging.INFO, logger="semsearch.web.app"):
@@ -132,7 +115,7 @@ async def test_search_logs_handled_embedding_error_without_query(caplog, monkeyp
         raise EmbeddingError("service unavailable")
 
     monkeypatch.setattr("semsearch.web.app.search", fake_search)
-    monkeypatch.setattr("semsearch.web.app.list_available_languages", languages)
+    app.state.languages.codes = ("en", "fr")
     transport = httpx.ASGITransport(app=app)
 
     with caplog.at_level(logging.WARNING, logger="semsearch.web.app"):
@@ -163,7 +146,7 @@ async def test_search_uses_selected_retriever_and_preserves_checkbox_state(
         return []
 
     monkeypatch.setattr("semsearch.web.app.search", fake_search)
-    monkeypatch.setattr("semsearch.web.app.list_available_languages", languages)
+    app.state.languages.codes = ("en", "fr")
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -190,7 +173,7 @@ async def test_search_rejects_request_without_a_retriever(monkeypatch):
         raise AssertionError("search without a retriever must not run")
 
     monkeypatch.setattr("semsearch.web.app.search", fail_search)
-    monkeypatch.setattr("semsearch.web.app.list_available_languages", languages)
+    app.state.languages.codes = ("en", "fr")
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -223,17 +206,12 @@ async def test_search_accepts_three_letter_language(monkeypatch):
     app.state.pool = Pool()
     app.state.embed_query = object()
 
-    async def available_languages(conn):
-        return ["en", "pcm"]
-
     async def fake_search(value: str, **kwargs):
         assert kwargs["filters"][0]("p").params == ("pcm",)
         return []
 
     monkeypatch.setattr("semsearch.web.app.search", fake_search)
-    monkeypatch.setattr(
-        "semsearch.web.app.list_available_languages", available_languages
-    )
+    app.state.languages.codes = ("en", "pcm")
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -254,7 +232,7 @@ async def test_search_accepts_empty_language_without_filter(monkeypatch):
         return []
 
     monkeypatch.setattr("semsearch.web.app.search", fake_search)
-    monkeypatch.setattr("semsearch.web.app.list_available_languages", languages)
+    app.state.languages.codes = ("en", "fr")
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -272,7 +250,7 @@ async def test_date_only_submission_preserves_filter_without_search(monkeypatch)
         raise AssertionError("date-only submission must not search")
 
     monkeypatch.setattr("semsearch.web.app.search", fail_search)
-    monkeypatch.setattr("semsearch.web.app.list_available_languages", languages)
+    app.state.languages.codes = ("en", "fr")
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -311,7 +289,7 @@ async def test_invalid_date_range_returns_html_without_search(
         raise AssertionError("invalid date range must not search")
 
     monkeypatch.setattr("semsearch.web.app.search", fail_search)
-    monkeypatch.setattr("semsearch.web.app.list_available_languages", languages)
+    app.state.languages.codes = ("en", "fr")
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
